@@ -40,10 +40,23 @@ const INB_Y1 = HY1;
 
 const STOP_OFFSET = BLOCK_SIDE + MED / 2;
 
-const STOP_N = CY - STOP_OFFSET;
-const STOP_S = CY + STOP_OFFSET;
-const STOP_W = CX - STOP_OFFSET;
-const STOP_E = CX + STOP_OFFSET;
+/** Intersection pavement box (crosswalks sit just outside these edges). */
+const INTERSECTION_N = CY - STOP_OFFSET;
+const INTERSECTION_S = CY + STOP_OFFSET;
+const INTERSECTION_W = CX - STOP_OFFSET;
+const INTERSECTION_E = CX + STOP_OFFSET;
+
+/** Inbound stop lines sit before the crosswalk on each approach. */
+const STOP_LINE_SETBACK =
+  MARKING.CROSSWALK_SLAT_LEN +
+  MARKING.CROSSWALK_LEAD +
+  MARKING.STOP_LINE_CROSSWALK_GAP +
+  MARKING.STOP_LINE_WIDTH / 2;
+
+const STOP_N = INTERSECTION_N - STOP_LINE_SETBACK;
+const STOP_S = INTERSECTION_S + STOP_LINE_SETBACK;
+const STOP_W = INTERSECTION_W - STOP_LINE_SETBACK;
+const STOP_E = INTERSECTION_E + STOP_LINE_SETBACK;
 
 const LANE_TYPES = ['left', 'straight', 'straight', 'right'];
 
@@ -239,19 +252,19 @@ const LW = LW_IN;
 const N_LEFT = {
   p0: { x: lx, y: STOP_N - P0_APPROACH_OFFSET },
   p1: { x: lx, y: CY },
-  p2: { x: STOP_W - LW, y: HY0 + 1.5 * LW },
+  p2: { x: INTERSECTION_W - LW, y: HY0 + 1.5 * LW },
 };
 
 const N_STRAIGHT = {
   p0: { x: straightMidX, y: STOP_N },
   p1: { x: straightMidX, y: CY },
-  p2: { x: straightMidX, y: STOP_S },
+  p2: { x: straightMidX, y: INTERSECTION_S },
 };
 
 const N_RIGHT = {
   p0: { x: rx, y: STOP_N - P0_APPROACH_OFFSET },
-  p1: { x: STOP_E - 2 * LW, y: CY },
-  p2: { x: STOP_E, y: HY0 + 2.5 * LW },
+  p1: { x: INTERSECTION_E - 2 * LW, y: CY },
+  p2: { x: INTERSECTION_E, y: HY0 + 2.5 * LW },
 };
 
 export const waypoints = {
@@ -349,12 +362,12 @@ export function getSignalFacingHeading(approach) {
   return h >= 360 ? h - 360 : h;
 }
 
-/** Y positions of lamp centers inside housing (local coords, origin at housing center). */
+/** X positions of lamp centers in horizontal housing (local coords, origin at center). */
 export function getSignalLampOffsets() {
   const r = SIGNAL.LIGHT_RADIUS;
-  const step = SIGNAL.BULB_DIAMETER + SIGNAL.HEAD_SPACING;
-  const first = -SIGNAL.HEAD_HEIGHT / 2 + SIGNAL.HEAD_PADDING + r;
-  return [first, first + step, first + step * 2, first + step * 3];
+  const slot = SIGNAL.BULB_DIAMETER + SIGNAL.INNER_GAP;
+  const first = -SIGNAL.HEAD_WIDTH / 2 + SIGNAL.HEAD_PADDING + r;
+  return [first, first + slot, first + slot * 2, first + slot * 3];
 }
 
 /** Distance from housing center to the face pointing toward (towardX, towardY). */
@@ -382,50 +395,49 @@ function housingHalfToward(facingHeading, towardX, towardY) {
   return maxDot;
 }
 
-/** Signal heads outside the intersection box, same inset from each inner edge. */
+/**
+ * Signal heads at the driver's-right corner on the far side of the intersection (RHD).
+ * Matches design reference: horizontal housing, one head per approach.
+ */
 export function getSignalHeadLayouts() {
-  const inset = SIGNAL.INTERSECTION_INSET ?? SIGNAL.POLE_SETBACK;
+  const off = SIGNAL.CORNER_OFFSET ?? SIGNAL.INTERSECTION_INSET ?? 18;
   const box = getIntersectionInnerRect();
   const layouts = [];
 
-  const nOut = outboundBlockCenter('N');
   const hN = getSignalFacingHeading('N');
   layouts.push({
     approach: 'N',
-    x: nOut.x,
-    y: box.y0 - inset - housingHalfToward(hN, 0, 1),
+    x: box.x0 - off - housingHalfToward(hN, -1, 0),
+    y: box.y1 + off + housingHalfToward(hN, 0, 1),
     facingHeading: hN,
-    laneCenterX: nOut.x,
+    rotationRad: Math.PI,
   });
 
-  const sOut = outboundBlockCenter('S');
   const hS = getSignalFacingHeading('S');
   layouts.push({
     approach: 'S',
-    x: sOut.x,
-    y: box.y1 + inset + housingHalfToward(hS, 0, -1),
+    x: box.x1 + off + housingHalfToward(hS, 1, 0),
+    y: box.y0 - off - housingHalfToward(hS, 0, -1),
     facingHeading: hS,
-    laneCenterX: sOut.x,
+    rotationRad: 0,
   });
 
-  const wOut = outboundBlockCenter('W');
-  const hW = getSignalFacingHeading('W');
-  layouts.push({
-    approach: 'W',
-    x: box.x0 - inset - housingHalfToward(hW, 1, 0),
-    y: wOut.y,
-    facingHeading: hW,
-    laneCenterY: wOut.y,
-  });
-
-  const eOut = outboundBlockCenter('E');
   const hE = getSignalFacingHeading('E');
   layouts.push({
     approach: 'E',
-    x: box.x1 + inset + housingHalfToward(hE, -1, 0),
-    y: eOut.y,
+    x: box.x0 - off - housingHalfToward(hE, -1, 0),
+    y: box.y0 - off - housingHalfToward(hE, 0, -1),
     facingHeading: hE,
-    laneCenterY: eOut.y,
+    rotationRad: -Math.PI / 2,
+  });
+
+  const hW = getSignalFacingHeading('W');
+  layouts.push({
+    approach: 'W',
+    x: box.x1 + off + housingHalfToward(hW, 1, 0),
+    y: box.y1 + off + housingHalfToward(hW, 0, 1),
+    facingHeading: hW,
+    rotationRad: Math.PI / 2,
   });
 
   return layouts;
@@ -460,10 +472,10 @@ export function getHorizontalRoadYBounds() {
 
 export function getIntersectionInnerRect() {
   return {
-    x0: STOP_W,
-    y0: STOP_N,
-    x1: STOP_E,
-    y1: STOP_S,
+    x0: INTERSECTION_W,
+    y0: INTERSECTION_N,
+    x1: INTERSECTION_E,
+    y1: INTERSECTION_S,
   };
 }
 
@@ -720,14 +732,14 @@ function findOutboundLeftTurnLane(destApproach) {
 function outboundLeftLaneEdge(destApproach, outboundLane) {
   if (outboundLane.centerX !== undefined) {
     if (destApproach === 'N') {
-      return { x: outboundLane.centerX, y: STOP_N };
+      return { x: outboundLane.centerX, y: INTERSECTION_N };
     }
-    return { x: outboundLane.centerX, y: STOP_S };
+    return { x: outboundLane.centerX, y: INTERSECTION_S };
   }
   if (destApproach === 'E') {
-    return { x: STOP_E, y: outboundLane.centerY };
+    return { x: INTERSECTION_E, y: outboundLane.centerY };
   }
-  return { x: STOP_W, y: outboundLane.centerY };
+  return { x: INTERSECTION_W, y: outboundLane.centerY };
 }
 
 /** On outbound left lane centerline just past the intersection box. */
@@ -735,14 +747,14 @@ function outboundLeftLaneEnd(destApproach, outboundLane) {
   const pad = LW_OUT * 1.5;
   if (outboundLane.centerX !== undefined) {
     if (destApproach === 'N') {
-      return { x: outboundLane.centerX, y: STOP_N - pad };
+      return { x: outboundLane.centerX, y: INTERSECTION_N - pad };
     }
-    return { x: outboundLane.centerX, y: STOP_S + pad };
+    return { x: outboundLane.centerX, y: INTERSECTION_S + pad };
   }
   if (destApproach === 'E') {
-    return { x: STOP_E + pad, y: outboundLane.centerY };
+    return { x: INTERSECTION_E + pad, y: outboundLane.centerY };
   }
-  return { x: STOP_W - pad, y: outboundLane.centerY };
+  return { x: INTERSECTION_W - pad, y: outboundLane.centerY };
 }
 
 /** Inside curb apex for a driver-right turn (inset from intersection box corner). */
@@ -750,13 +762,13 @@ function rightTurnCornerPoint(fromApproach) {
   const d = LW_IN * 1.4;
   switch (fromApproach) {
     case 'N':
-      return { x: STOP_W + d, y: STOP_N + d };
+      return { x: INTERSECTION_W + d, y: INTERSECTION_N + d };
     case 'S':
-      return { x: STOP_E - d, y: STOP_S - d };
+      return { x: INTERSECTION_E - d, y: INTERSECTION_S - d };
     case 'E':
-      return { x: STOP_E - d, y: STOP_N + d };
+      return { x: INTERSECTION_E - d, y: INTERSECTION_N + d };
     case 'W':
-      return { x: STOP_W + d, y: STOP_S - d };
+      return { x: INTERSECTION_W + d, y: INTERSECTION_S - d };
     default:
       throw new Error(`Unknown approach: ${fromApproach}`);
   }
@@ -840,14 +852,14 @@ export function getBezierPath(waypointKey) {
 export function buildStraightPathForLane(lane) {
   const stop = getInboundStopCenter(lane);
   if (lane.centerX !== undefined) {
-    const exitY = lane.approach === 'N' ? STOP_S : STOP_N;
+    const exitY = lane.approach === 'N' ? INTERSECTION_S : INTERSECTION_N;
     return {
       p0: { x: lane.centerX, y: stop.y },
       p1: { x: lane.centerX, y: CY },
       p2: { x: lane.centerX, y: exitY },
     };
   }
-  const exitX = lane.approach === 'E' ? STOP_W : STOP_E;
+  const exitX = lane.approach === 'E' ? INTERSECTION_W : INTERSECTION_E;
   return {
     p0: { x: stop.x, y: lane.centerY },
     p1: { x: CX, y: lane.centerY },
@@ -910,10 +922,10 @@ export function zonesAlongBezier(b) {
 
 export function getMedianStripRects() {
   return [
-    { x: MED_X0, y: 0, w: MED, h: STOP_N },
-    { x: MED_X0, y: STOP_S, w: MED, h: W - STOP_S },
-    { x: 0, y: MED_Y0, w: STOP_W, h: MED },
-    { x: STOP_E, y: MED_Y0, w: W - STOP_E, h: MED },
+    { x: MED_X0, y: 0, w: MED, h: INTERSECTION_N },
+    { x: MED_X0, y: INTERSECTION_S, w: MED, h: W - INTERSECTION_S },
+    { x: 0, y: MED_Y0, w: INTERSECTION_W, h: MED },
+    { x: INTERSECTION_E, y: MED_Y0, w: W - INTERSECTION_E, h: MED },
   ];
 }
 
@@ -945,45 +957,45 @@ function addHorizontalInternalBoundariesClipped(lines, y0, y1, xMin, xMax, laneW
 export function getLaneBoundaryPolylines() {
   const lines = [];
   // Inbound: equal lanes across full slab; outbound: wider lanes set back from median.
-  addVerticalInternalBoundariesClipped(lines, VX0, MED_X0, 0, STOP_N, LW_IN_EQUAL, VX0, 1);
+  addVerticalInternalBoundariesClipped(lines, VX0, MED_X0, 0, INTERSECTION_N, LW_IN_EQUAL, VX0, 1);
   addVerticalInternalBoundariesClipped(
     lines,
     MED_X0 - BLOCK_OUT,
     MED_X0 - OUT_CLEAR,
-    STOP_S,
+    INTERSECTION_S,
     W,
     LW_OUT,
     MED_X0 - OUT_CLEAR,
     -1
   );
-  addVerticalInternalBoundariesClipped(lines, INB_X0, INB_X1, STOP_S, W, LW_IN_EQUAL, INB_X0, 1);
+  addVerticalInternalBoundariesClipped(lines, INB_X0, INB_X1, INTERSECTION_S, W, LW_IN_EQUAL, INB_X0, 1);
   addVerticalInternalBoundariesClipped(
     lines,
     MED_X1 + OUT_CLEAR,
     MED_X1 + BLOCK_OUT,
     0,
-    STOP_N,
+    INTERSECTION_N,
     LW_OUT,
     MED_X1 + OUT_CLEAR,
     1
   );
-  addHorizontalInternalBoundariesClipped(lines, HY0, MED_Y0, STOP_E, W, LW_IN_EQUAL, HY0, 1);
+  addHorizontalInternalBoundariesClipped(lines, HY0, MED_Y0, INTERSECTION_E, W, LW_IN_EQUAL, HY0, 1);
   addHorizontalInternalBoundariesClipped(
     lines,
     MED_Y0 - BLOCK_OUT,
     MED_Y0 - OUT_CLEAR,
     0,
-    STOP_W,
+    INTERSECTION_W,
     LW_OUT,
     MED_Y0 - OUT_CLEAR,
     -1
   );
-  addHorizontalInternalBoundariesClipped(lines, MED_Y1, INB_Y1, 0, STOP_W, LW_IN_EQUAL, MED_Y1, 1);
+  addHorizontalInternalBoundariesClipped(lines, MED_Y1, INB_Y1, 0, INTERSECTION_W, LW_IN_EQUAL, MED_Y1, 1);
   addHorizontalInternalBoundariesClipped(
     lines,
     MED_Y1 + OUT_CLEAR,
     MED_Y1 + BLOCK_OUT,
-    STOP_E,
+    INTERSECTION_E,
     W,
     LW_OUT,
     MED_Y1 + OUT_CLEAR,

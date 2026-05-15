@@ -94,27 +94,30 @@ export const SPAWN = {
 };
 
 function buildSignalConstants() {
-  const LIGHT_RADIUS = 5;
-  const HEAD_PADDING = 5;
-  const HEAD_SPACING = 5;
+  const LIGHT_RADIUS = 6;
+  const HEAD_PADDING = 6;
+  const INNER_GAP = 2.5;
   const LAMP_COUNT = 4;
   const BULB_DIAMETER = LIGHT_RADIUS * 2;
-  const HEAD_HEIGHT =
-    HEAD_PADDING * 2 + LAMP_COUNT * BULB_DIAMETER + (LAMP_COUNT - 1) * HEAD_SPACING;
-  const HEAD_WIDTH = HEAD_PADDING * 2 + BULB_DIAMETER;
+  /** Horizontal housing: R · Y · G · ← in a row (render layout only). */
+  const HEAD_WIDTH =
+    HEAD_PADDING * 2 + LAMP_COUNT * BULB_DIAMETER + (LAMP_COUNT - 1) * INNER_GAP;
+  const HEAD_HEIGHT = HEAD_PADDING * 2 + BULB_DIAMETER;
   return {
     LIGHT_RADIUS,
     HEAD_PADDING,
-    HEAD_SPACING,
+    INNER_GAP,
     LAMP_COUNT,
     BULB_DIAMETER,
     HEAD_HEIGHT,
     HEAD_WIDTH,
-    /** Inner face of housing to intersection box edge (all approaches). */
-    INTERSECTION_INSET: 10,
-    /** @deprecated Use INTERSECTION_INSET */
-    POLE_SETBACK: 10,
-    /** Left-turn lamp arrow shape metrics. */
+    /** Sidewalk setback from intersection corner (render layout). */
+    CORNER_OFFSET: 18,
+    /** @deprecated Use CORNER_OFFSET */
+    INTERSECTION_INSET: 18,
+    POLE_SETBACK: 18,
+    POST_W: 3,
+    POST_H: 8,
     ARROW_SCALE: 1,
   };
 }
@@ -136,44 +139,45 @@ export const LOOP = {
 
 /** Static scene rendering (no duplicate literals in renderer) */
 export const COLORS = {
-  BACKGROUND: '#2a4a2a',
-  ASPHALT: '#3d3d3d',
-  LANE_LINE: '#d0d0d0',
-  STOP_LINE: '#ffffff',
-  /** Raised median between opposing directions */
-  MEDIAN: '#6a5a28',
-  MEDIAN_EDGE: '#8a7a40',
-  SIGNAL_OFF: '#1e1e1e',
-  SIGNAL_RED: '#c0392b',
-  SIGNAL_YELLOW: '#c9a227',
-  SIGNAL_GREEN: '#3d8b5a',
-  SIGNAL_HOUSING: '#2a2a2a',
-  SIGNAL_HOUSING_STROKE: '#444444',
-  /** Protected left-turn arrow glyph fill colors. */
-  SIGNAL_LEFT_ARROW_ON: '#7ee08a',
-  SIGNAL_LEFT_ARROW_OFF: '#3a4a3f',
-  /** Deterministic car body palette (muted, non-neon) */
+  BACKGROUND: '#F4F2EC',
+  ASPHALT: '#2B2D31',
+  LANE_LINE: '#ECE7DA',
+  CENTER_LINE: '#E8B247',
+  STOP_LINE: '#ECE7DA',
+  SIGNAL_OFF: '#26282C',
+  SIGNAL_RED: '#DD4B3A',
+  SIGNAL_YELLOW: '#F2B43A',
+  SIGNAL_GREEN: '#2FA56B',
+  SIGNAL_HOUSING: '#16181B',
+  SIGNAL_HOUSING_STROKE: 'rgba(255,255,255,0.07)',
+  SIGNAL_LEFT_ARROW_ON: '#0E1116',
+  SIGNAL_LEFT_ARROW_OFF: '#3B3E45',
+  /** Muted palette (design reference) */
   CAR: [
-    '#8b3a3a',
-    '#4a5568',
-    '#5c6b73',
-    '#3d4f5f',
-    '#6b5b4f',
-    '#4a5d4a',
-    '#5a4a6a',
-    '#6a5a48',
+    '#7E8590',
+    '#3A4252',
+    '#6B8E7E',
+    '#A4694B',
+    '#B8A777',
+    '#D2C9B6',
+    '#4E5763',
   ],
 };
 
 export const MARKING = {
-  DASH_LENGTH: 12,
-  DASH_GAP: 10,
-  LANE_LINE_WIDTH: 1,
-  STOP_LINE_WIDTH: 4,
+  DASH_LENGTH: 10,
+  DASH_GAP: 9,
+  LANE_LINE_WIDTH: 1.4,
+  STOP_LINE_WIDTH: 3,
   EDGE_LINE_WIDTH: 2,
-  /** Inbound pavement arrows: stroke-only, before stop line */
+  CENTER_LINE_WIDTH: 1.7,
+  CENTER_LINE_GAP: 3.2,
+  CROSSWALK_SLAT_LEN: 18,
+  CROSSWALK_LEAD: 2,
+  /** Gap between crosswalk (far edge) and stop line. */
+  STOP_LINE_CROSSWALK_GAP: 2,
   ARROW_STROKE: 1,
-  ARROW_SHAFT: 7,
-  ARROW_HEAD: 3.5,
-  ARROW_FROM_STOP: 16,
+  ARROW_SHAFT: 10,
+  ARROW_HEAD: 4,
+  ARROW_FROM_STOP: 60,
 };

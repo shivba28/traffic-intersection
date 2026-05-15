@@ -1,7 +1,7 @@
 import { WORLD, CAR, COLORS, MARKING, SIGNAL } from './constants.js';
 import { DEBUG_INTERSECTION } from './intersectionController.js';
 
-/** CSS display size from viewport (square world → equal width and height). */
+/** Full viewport width; square display (world is 1:1). */
 function computeDisplaySize() {
   const width = document.documentElement.clientWidth;
   return { width, height: width };
@@ -15,7 +15,7 @@ function computeDisplaySize() {
  * @returns {CanvasRenderingContext2D}
  */
 function setupCanvas(canvas, cssWidth, cssHeight) {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const backingW = Math.max(1, Math.round(cssWidth * dpr));
   const backingH = Math.max(1, Math.round(cssHeight * dpr));
   canvas.width = backingW;
@@ -27,6 +27,16 @@ function setupCanvas(canvas, cssWidth, cssHeight) {
   const scale = dpr * (cssWidth / WORLD.SIZE);
   ctx.scale(scale, scale);
   return ctx;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function redrawStaticBackground(ctx, geometryModule) {
@@ -45,80 +55,141 @@ function strokeDashedLine(ctx, x1, y1, x2, y2) {
   ctx.setLineDash([]);
 }
 
-/**
- * Left-turn arrow path (local +x = along approach toward intersection).
- * @param {CanvasRenderingContext2D} ctx
- * @param {number} shaft
- * @param {number} head
- */
-function traceLeftTurnArrow(ctx, shaft, head) {
-  const leg = shaft * 0.42;
-  const jx = leg * 0.58;
-  const jy = leg * 1;
-  ctx.moveTo(-leg * 0.62, -1);
-  ctx.lineTo(jx, -1);
-  ctx.lineTo(jx, jy - 1);
-  ctx.moveTo(jx - head * 0.45, jy - head * 0.12 -1);
-  ctx.lineTo(jx, jy + head * 0.38 -1);
-  ctx.lineTo(jx + head * 0.45, jy - head * 0.12 -1);
+function drawDoubleCenterLine(ctx, x1, y1, x2, y2) {
+  const half = MARKING.CENTER_LINE_GAP / 2;
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return;
+  const nx = (-dy / len) * half;
+  const ny = (dx / len) * half;
+  ctx.strokeStyle = COLORS.CENTER_LINE;
+  ctx.lineWidth = MARKING.CENTER_LINE_WIDTH;
+  ctx.beginPath();
+  ctx.moveTo(x1 + nx, y1 + ny);
+  ctx.lineTo(x2 + nx, y2 + ny);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x1 - nx, y1 - ny);
+  ctx.lineTo(x2 - nx, y2 - ny);
+  ctx.stroke();
 }
 
 /**
- * Right-turn arrow path (local +x = along approach toward intersection).
- * Used by pavement markings and the signal left-arrow bulb.
  * @param {CanvasRenderingContext2D} ctx
- * @param {number} shaft
- * @param {number} head
+ * @param {typeof import('./geometry.js')} geometry
  */
-function traceRightTurnArrow(ctx, shaft, head) {
-  const leg = shaft * 0.42;
-  const jx = leg * 0.58;
-  const jy = -leg * 1.0;
-  ctx.moveTo(-leg * 0.62, +1);
-  ctx.lineTo(jx, +1);
-  ctx.lineTo(jx, jy + 1);
-  ctx.moveTo(jx - head * 0.45, jy + head * 0.12 + 1);
-  ctx.lineTo(jx, jy - head * 0.38 + 1);
-  ctx.lineTo(jx + head * 0.45, jy + head * 0.12 + 1);
+function drawCrosswalks(ctx, geometry) {
+  const box = geometry.getIntersectionInnerRect();
+  const slatW = 4;
+  const slatGap = 4;
+  const slatLen = MARKING.CROSSWALK_SLAT_LEN;
+  const lead = MARKING.CROSSWALK_LEAD;
+  ctx.save();
+  ctx.fillStyle = COLORS.LANE_LINE;
+
+  const topY = box.y0 - slatLen - lead;
+  for (let x = box.x0 + 4; x < box.x1 - 4; x += slatW + slatGap) {
+    ctx.fillRect(x, topY, slatW, slatLen);
+  }
+
+  const botY = box.y1 + lead;
+  for (let x = box.x0 + 4; x < box.x1 - 4; x += slatW + slatGap) {
+    ctx.fillRect(x, botY, slatW, slatLen);
+  }
+
+  const leftX = box.x0 - slatLen - lead;
+  for (let y = box.y0 + 4; y < box.y1 - 4; y += slatW + slatGap) {
+    ctx.fillRect(leftX, y, slatLen, slatW);
+  }
+
+  const rightX = box.x1 + lead;
+  for (let y = box.y0 + 4; y < box.y1 - 4; y += slatW + slatGap) {
+    ctx.fillRect(rightX, y, slatLen, slatW);
+  }
+  ctx.restore();
+}
+
+function drawFilledStopLines(ctx, segments) {
+  const thick = MARKING.STOP_LINE_WIDTH;
+  ctx.save();
+  ctx.fillStyle = COLORS.STOP_LINE;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const w = Math.abs(s.x2 - s.x1);
+    const h = Math.abs(s.y2 - s.y1);
+    if (w >= h) {
+      ctx.fillRect(Math.min(s.x1, s.x2), s.y1 - thick / 2, w, thick);
+    } else {
+      ctx.fillRect(s.x1 - thick / 2, Math.min(s.y1, s.y2), thick, h);
+    }
+  }
+  ctx.restore();
 }
 
 /**
- * Stroke-only pavement arrows (local +x = along approach toward intersection).
+ * Filled pavement arrow (local +x = along approach toward intersection).
  * @param {CanvasRenderingContext2D} ctx
  * @param {{ x: number, y: number, angle: number, arrow: string, approach: string }} spec
  */
 function drawPavementArrow(ctx, spec) {
-  const { x, y, angle, arrow, approach } = spec;
-  let draw = arrow;
-  // Swap L/R glyph so labels match lane types at each approach rotation (pavement only).
-  if (arrow === 'left' || arrow === 'right') {
-    draw = arrow === 'left' ? 'right' : 'left';
-  }
+  const { x, y, angle, arrow } = spec;
+  const len = MARKING.ARROW_SHAFT;
+  const s = len / 25;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  ctx.strokeStyle = COLORS.STOP_LINE;
-  ctx.globalAlpha = 0.88;
+  ctx.fillStyle = COLORS.LANE_LINE;
+  ctx.strokeStyle = COLORS.LANE_LINE;
   ctx.lineWidth = MARKING.ARROW_STROKE;
-  ctx.lineJoin = 'miter';
-  ctx.miterLimit = 2.5;
-  const sh = MARKING.ARROW_SHAFT;
-  const h = MARKING.ARROW_HEAD;
-  ctx.beginPath();
-  if (draw === 'straight') {
-    ctx.lineJoin = 'round';
-    ctx.moveTo(-sh * 0.5, 0);
-    ctx.lineTo(sh * 0.42, 0);
-    ctx.moveTo(sh * 0.42 - h, -h * 0.48);
-    ctx.lineTo(sh * 0.48, 0);
-    ctx.lineTo(sh * 0.42 - h, h * 0.48);
-  } else if (draw === 'left') {
-    traceLeftTurnArrow(ctx, sh, h);
-  } else if (draw === 'right') {
-    traceRightTurnArrow(ctx, sh, h);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  if (arrow === 'straight') {
+    const tip = 5 * s;
+    const headD = 6 * s;
+    const headW = 5 * s;
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.lineTo(len / 2 - tip, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(len / 2, 0);
+    ctx.lineTo(len / 2 - headD, -headW);
+    ctx.lineTo(len / 2 - headD, headW);
+    ctx.closePath();
+    ctx.fill();
+  } else if (arrow === 'left') {
+    const bend = 2 * s;
+    const leg = 9 * s;
+    const headY = 13 * s;
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.lineTo(bend, 0);
+    ctx.lineTo(bend, -leg);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(bend, -headY);
+    ctx.lineTo(bend - 5 * s, -8 * s);
+    ctx.lineTo(bend + 5 * s, -8 * s);
+    ctx.closePath();
+    ctx.fill();
+  } else if (arrow === 'right') {
+    const bend = 2 * s;
+    const leg = 9 * s;
+    const headY = 13 * s;
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.lineTo(bend, 0);
+    ctx.lineTo(bend, leg);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(bend, headY);
+    ctx.lineTo(bend - 5 * s, 8 * s);
+    ctx.lineTo(bend + 5 * s, 8 * s);
+    ctx.closePath();
+    ctx.fill();
   }
-  ctx.stroke();
-  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -128,176 +199,294 @@ function drawPavementArrow(ctx, spec) {
  */
 function drawStaticIntersection(ctx, geometry) {
   const L = WORLD.SIZE;
+  const vx = geometry.getVerticalRoadXBounds();
+  const hy = geometry.getHorizontalRoadYBounds();
+  const box = geometry.getIntersectionInnerRect();
+  const medians = geometry.getMedianStripRects();
+
   ctx.save();
   ctx.fillStyle = COLORS.BACKGROUND;
   ctx.fillRect(0, 0, L, L);
 
-  const vx = geometry.getVerticalRoadXBounds();
-  const hy = geometry.getHorizontalRoadYBounds();
-
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 4;
   ctx.fillStyle = COLORS.ASPHALT;
   ctx.fillRect(vx.x0, 0, vx.x1 - vx.x0, L);
   ctx.fillRect(0, hy.y0, L, hy.y1 - hy.y0);
+  ctx.restore();
 
-  const medians = geometry.getMedianStripRects();
-  ctx.fillStyle = COLORS.MEDIAN;
-  for (let m = 0; m < medians.length; m++) {
-    const r = medians[m];
-    ctx.fillRect(r.x, r.y, r.w, r.h);
-  }
-  ctx.strokeStyle = COLORS.MEDIAN_EDGE;
-  ctx.lineWidth = MARKING.EDGE_LINE_WIDTH;
-  for (let m = 0; m < medians.length; m++) {
-    const r = medians[m];
-    ctx.strokeRect(r.x, r.y, r.w, r.h);
-  }
+  ctx.fillStyle = COLORS.ASPHALT;
+  ctx.fillRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
 
-  ctx.strokeStyle = COLORS.LANE_LINE;
-  ctx.lineWidth = MARKING.LANE_LINE_WIDTH;
-  ctx.lineCap = 'butt';
-  const boundaries = geometry.getLaneBoundaryPolylines();
-  for (let i = 0; i < boundaries.length; i++) {
-    const ln = boundaries[i];
-    strokeDashedLine(ctx, ln.x1, ln.y1, ln.x2, ln.y2);
-  }
+  const grd = ctx.createRadialGradient(
+    WORLD.CENTER,
+    WORLD.CENTER,
+    (box.x1 - box.x0) * 0.2,
+    WORLD.CENTER,
+    WORLD.CENTER,
+    (box.x1 - box.x0) * 0.8
+  );
+  grd.addColorStop(0, 'rgba(0,0,0,0)');
+  grd.addColorStop(1, 'rgba(0,0,0,0.18)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
+
+  drawLaneMarkings(ctx, geometry, vx, hy, box, medians);
+
+  drawCrosswalks(ctx, geometry);
+
+  const stops = geometry.getStopLineSegments();
+  drawFilledStopLines(ctx, stops);
 
   const arrows = geometry.getInboundLaneArrowSpecs();
   for (let a = 0; a < arrows.length; a++) {
     drawPavementArrow(ctx, arrows[a]);
   }
 
-  ctx.strokeStyle = COLORS.STOP_LINE;
-  ctx.lineWidth = MARKING.STOP_LINE_WIDTH;
-  ctx.lineCap = 'square';
-  const stops = geometry.getStopLineSegments();
-  for (let i = 0; i < stops.length; i++) {
-    const s = stops[i];
-    ctx.beginPath();
-    ctx.moveTo(s.x1, s.y1);
-    ctx.lineTo(s.x2, s.y2);
-    ctx.stroke();
-  }
-
   ctx.restore();
 }
 
-function signalBulbColor(state) {
-  if (state === 'green') return COLORS.SIGNAL_GREEN;
-  if (state === 'yellow') return COLORS.SIGNAL_YELLOW;
-  if (state === 'red') return COLORS.SIGNAL_RED;
-  return COLORS.SIGNAL_OFF;
-}
-
-function drawLeftArrowBulb(ctx, lit) {
-  const r = SIGNAL.LIGHT_RADIUS;
-  const sh = r * (MARKING.ARROW_SHAFT / MARKING.ARROW_HEAD) * 0.58;
-  const h = sh * (MARKING.ARROW_HEAD / MARKING.ARROW_SHAFT);
-  const leg = sh * 0.42;
-  const jx = leg * 0.58;
-  const jy = -leg * 0.58;
-  const minX = -leg * 0.62;
-  const maxX = jx + h * 0.45;
-  const minY = jy - h * 0.38 + 1;
-  const maxY = h * 0.12 + 1;
-
-  ctx.strokeStyle = lit ? COLORS.SIGNAL_LEFT_ARROW_ON : COLORS.SIGNAL_LEFT_ARROW_OFF;
-  ctx.lineWidth = 1.2;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'miter';
-  ctx.miterLimit = 2.5;
+function drawLaneMarkings(ctx, geometry, vx, hy, box, medians) {
+  const L = WORLD.SIZE;
   ctx.save();
-  ctx.translate(-(minX + maxX) / 2, -(minY + maxY) / 2);
+  ctx.strokeStyle = COLORS.LANE_LINE;
+  ctx.lineWidth = MARKING.LANE_LINE_WIDTH;
+  ctx.lineCap = 'butt';
+
+  const boundaries = geometry.getLaneBoundaryPolylines();
+  for (let i = 0; i < boundaries.length; i++) {
+    const ln = boundaries[i];
+    strokeDashedLine(ctx, ln.x1, ln.y1, ln.x2, ln.y2);
+  }
+
+  if (medians.length > 0) {
+    const medX0 = medians[0].x;
+    const medX1 = medX0 + medians[0].w;
+    drawDoubleCenterLine(ctx, medX0, 0, medX0, box.y0);
+    drawDoubleCenterLine(ctx, medX1, 0, medX1, box.y0);
+    drawDoubleCenterLine(ctx, medX0, box.y1, medX0, L);
+    drawDoubleCenterLine(ctx, medX1, box.y1, medX1, L);
+
+    const medY0 = medians[2].y;
+    const medY1 = medY0 + medians[2].h;
+    drawDoubleCenterLine(ctx, 0, medY0, box.x0, medY0);
+    drawDoubleCenterLine(ctx, 0, medY1, box.x0, medY1);
+    drawDoubleCenterLine(ctx, box.x1, medY0, L, medY0);
+    drawDoubleCenterLine(ctx, box.x1, medY1, L, medY1);
+  }
+
+  ctx.strokeStyle = COLORS.LANE_LINE;
+  ctx.lineWidth = MARKING.EDGE_LINE_WIDTH;
+  ctx.setLineDash([]);
   ctx.beginPath();
-  traceRightTurnArrow(ctx, sh, h);
+  ctx.moveTo(vx.x0, 0);
+  ctx.lineTo(vx.x0, box.y0);
   ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(vx.x1, 0);
+  ctx.lineTo(vx.x1, box.y0);
+  ctx.stroke();
+  const edgeL = WORLD.SIZE;
+  ctx.beginPath();
+  ctx.moveTo(vx.x0, box.y1);
+  ctx.lineTo(vx.x0, edgeL);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(vx.x1, box.y1);
+  ctx.lineTo(vx.x1, edgeL);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, hy.y0);
+  ctx.lineTo(box.x0, hy.y0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, hy.y1);
+  ctx.lineTo(box.x0, hy.y1);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(box.x1, hy.y0);
+  ctx.lineTo(edgeL, hy.y0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(box.x1, hy.y1);
+  ctx.lineTo(edgeL, hy.y1);
+  ctx.stroke();
+
   ctx.restore();
 }
 
-function drawSignalBulb(ctx, y, color, isArrow, arrowLit) {
-  const r = SIGNAL.LIGHT_RADIUS;
+function drawLamp(ctx, x, y, r, color, lit) {
+  if (lit) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 14;
+  }
   ctx.beginPath();
-  ctx.arc(0, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = color;
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = lit ? color : COLORS.SIGNAL_OFF;
   ctx.fill();
-  if (isArrow) {
-    ctx.save();
-    ctx.translate(0, y);
-    drawLeftArrowBulb(ctx, arrowLit);
-    ctx.restore();
-    return;
+  ctx.shadowBlur = 0;
+  if (lit) {
+    ctx.beginPath();
+    ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.35, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.fill();
   }
 }
 
-function drawSignalHead(ctx, layout, approachLights, lampOffsets) {
-  const { x, y, facingHeading } = layout;
-  const rad = ((facingHeading - 90) * Math.PI) / 180;
-  const offsets = lampOffsets;
+function drawArrowLamp(ctx, x, y, r, state) {
+  const lit = state === 'green';
+  const amb = state === 'yellow';
+  const active = lit || amb;
+  const litColor = lit ? COLORS.SIGNAL_GREEN : COLORS.SIGNAL_YELLOW;
+
+  if (active) {
+    ctx.shadowColor = litColor;
+    ctx.shadowBlur = 12;
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = active ? litColor : COLORS.SIGNAL_OFF;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  if (active) {
+    ctx.beginPath();
+    ctx.arc(x - r * 0.28, y - r * 0.28, r * 0.32, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fill();
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = active ? COLORS.SIGNAL_LEFT_ARROW_ON : COLORS.SIGNAL_LEFT_ARROW_OFF;
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.62, 0);
+  ctx.lineTo(-r * 0.05, -r * 0.5);
+  ctx.lineTo(-r * 0.05, -r * 0.18);
+  ctx.lineTo(r * 0.58, -r * 0.18);
+  ctx.lineTo(r * 0.58, r * 0.18);
+  ctx.lineTo(-r * 0.05, r * 0.18);
+  ctx.lineTo(-r * 0.05, r * 0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSignalHead(ctx, layout, approachLights) {
+  const { x, y, rotationRad } = layout;
+  const rad =
+    rotationRad ??
+    ((layout.facingHeading - 90) * Math.PI) / 180;
+  const main = approachLights.main;
+  const leftState = approachLights.leftArrow === 'green' ? 'green' : 'red';
+
+  const lampR = SIGNAL.LIGHT_RADIUS;
+  const pad = SIGNAL.HEAD_PADDING;
+  const innerGap = SIGNAL.INNER_GAP;
+  const slot = lampR * 2 + innerGap;
+  const w = SIGNAL.HEAD_WIDTH;
+  const h = SIGNAL.HEAD_HEIGHT;
 
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rad);
 
-  const hw = SIGNAL.HEAD_WIDTH / 2;
-  const hh = SIGNAL.HEAD_HEIGHT / 2;
   ctx.fillStyle = COLORS.SIGNAL_HOUSING;
+  ctx.fillRect(-SIGNAL.POST_W / 2, -SIGNAL.POST_H, SIGNAL.POST_W, SIGNAL.POST_H);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  roundRect(ctx, -w / 2 + 1, -h / 2 + 2, w, h, 6);
+  ctx.fill();
+
+  ctx.fillStyle = COLORS.SIGNAL_HOUSING;
+  roundRect(ctx, -w / 2, -h / 2, w, h, 6);
+  ctx.fill();
+
   ctx.strokeStyle = COLORS.SIGNAL_HOUSING_STROKE;
   ctx.lineWidth = 1;
-  ctx.fillRect(-hw, -hh, SIGNAL.HEAD_WIDTH, SIGNAL.HEAD_HEIGHT);
-  ctx.strokeRect(-hw, -hh, SIGNAL.HEAD_WIDTH, SIGNAL.HEAD_HEIGHT);
+  roundRect(ctx, -w / 2, -h / 2, w, h, 6);
+  ctx.stroke();
 
-  const main = approachLights.main;
-  const leftOn = approachLights.leftArrow === 'green';
-  drawSignalBulb(
-    ctx,
-    offsets[0],
-    signalBulbColor('off'),
-    true,
-    leftOn
-  );
-  drawSignalBulb(ctx, offsets[1], signalBulbColor(main === 'red' ? 'red' : 'off'), false, false);
-  drawSignalBulb(ctx, offsets[2], signalBulbColor(main === 'yellow' ? 'yellow' : 'off'), false, false);
-  drawSignalBulb(ctx, offsets[3], signalBulbColor(main === 'green' ? 'green' : 'off'), false, false);
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const xd = -w / 2 + pad + lampR + (i - 0.5) * slot - innerGap / 2;
+    ctx.beginPath();
+    ctx.moveTo(xd, -h / 2 + 3);
+    ctx.lineTo(xd, h / 2 - 3);
+    ctx.stroke();
+  }
+
+  const lampX = [];
+  for (let i = 0; i < 4; i++) {
+    lampX.push(-w / 2 + pad + lampR + i * slot);
+  }
+
+  drawLamp(ctx, lampX[0], 0, lampR, COLORS.SIGNAL_RED, main === 'red');
+  drawLamp(ctx, lampX[1], 0, lampR, COLORS.SIGNAL_YELLOW, main === 'yellow');
+  drawLamp(ctx, lampX[2], 0, lampR, COLORS.SIGNAL_GREEN, main === 'green');
+  drawArrowLamp(ctx, lampX[3], 0, lampR, leftState);
 
   ctx.restore();
 }
 
 function drawLights(ctx, lights, geometryModule) {
   const layouts = geometryModule.getSignalHeadLayouts();
-  const lampOffsets = geometryModule.getSignalLampOffsets();
   for (let i = 0; i < layouts.length; i++) {
     const layout = layouts[i];
-    drawSignalHead(ctx, layout, lights[layout.approach], lampOffsets);
+    drawSignalHead(ctx, layout, lights[layout.approach]);
   }
 }
 
-function drawRoundedCar(ctx, car) {
+function carShowsBrakeLights(car) {
+  if (car.state === 'crossing' || car.state === 'exiting') return false;
+  const v = car.speed ?? 0;
+  return v < CAR.MAX_SPEED * 0.5 && (car.state === 'stopped' || v < CAR.MAX_SPEED * 0.35);
+}
+
+function drawCar(ctx, car) {
   const len = CAR.LENGTH;
   const w = CAR.WIDTH;
-  const r = 2;
+  const r = 2.5;
   const rad = ((car.heading - 90) * Math.PI) / 180;
 
   ctx.save();
   ctx.translate(car.x, car.y);
   ctx.rotate(rad);
-  ctx.fillStyle = car.color;
-  ctx.beginPath();
-  ctx.moveTo(-len / 2 + r, -w / 2);
-  ctx.lineTo(len / 2 - r, -w / 2);
-  ctx.quadraticCurveTo(len / 2, -w / 2, len / 2, -w / 2 + r);
-  ctx.lineTo(len / 2, w / 2 - r);
-  ctx.quadraticCurveTo(len / 2, w / 2, len / 2 - r, w / 2);
-  ctx.lineTo(-len / 2 + r, w / 2);
-  ctx.quadraticCurveTo(-len / 2, w / 2, -len / 2, w / 2 - r);
-  ctx.lineTo(-len / 2, -w / 2 + r);
-  ctx.quadraticCurveTo(-len / 2, -w / 2, -len / 2 + r, -w / 2);
-  ctx.closePath();
+
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  roundRect(ctx, -len / 2 + 1, -w / 2 + 2, len, w, r);
   ctx.fill();
+
+  ctx.fillStyle = car.color;
+  roundRect(ctx, -len / 2, -w / 2, len, w, r);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  roundRect(ctx, -len / 2 + 3, -w / 2 + 1.4, len - 6, w - 2.8, 1.5);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(len / 2 - 4, -w / 2 + 1.5);
+  ctx.lineTo(len / 2 - 4, w / 2 - 1.5);
+  ctx.stroke();
+
+  if (carShowsBrakeLights(car)) {
+    ctx.fillStyle = '#E2503C';
+    ctx.fillRect(-len / 2 + 0.5, -w / 2 + 1.5, 1.2, 1.5);
+    ctx.fillRect(-len / 2 + 0.5, w / 2 - 3, 1.2, 1.5);
+  }
+
   ctx.restore();
 }
 
 function drawCars(ctx, cars) {
   for (let i = 0; i < cars.length; i++) {
-    drawRoundedCar(ctx, cars[i]);
+    drawCar(ctx, cars[i]);
   }
 }
 
@@ -360,11 +549,6 @@ export class Renderer {
     this.bgCtx = setupCanvas(this.bgCanvas, width, height);
     this.fgCtx = setupCanvas(this.fgCanvas, width, height);
     this.signalsCtx = setupCanvas(this.signalsCanvas, width, height);
-    const container = this.bgCanvas.parentElement;
-    if (container) {
-      container.style.width = `${width}px`;
-      container.style.height = `${height}px`;
-    }
   }
 
   /** Re-fit canvases to viewport and redraw static layer (call on window resize). */
