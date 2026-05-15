@@ -3,7 +3,7 @@
  */
 
 import { LOOP, MAIN_SIGNAL, LEFT_ARROW } from './constants.js';
-import { PHASES } from './trafficController.js';
+import { PHASES, PED_STATE } from './trafficController.js';
 import { readSensors } from './sensorSystem.js';
 
 const PLAY_PATH =
@@ -17,6 +17,125 @@ const SPEED_KEYS = {
   '3': 2,
   '4': 4,
 };
+
+/** Compass side of the crosswalk (`data-ped-approach`) → direction pedestrians walk toward along that stripe. */
+const PED_WALK_TOWARD = {
+  N: 'East',
+  S: 'West',
+  E: 'South',
+  W: 'North',
+};
+
+/** Side label for tooltips / aria (which leg of the intersection). */
+const PED_CROSSWALK_LEG = {
+  N: 'north',
+  S: 'south',
+  E: 'east',
+  W: 'west',
+};
+
+const PED_BTN_STATE_CLASSES = [
+  'ped-btn--default',
+  'ped-btn--requested',
+  'ped-btn--active',
+  'ped-btn--flashing',
+  'ped-btn--disabled',
+];
+
+/**
+ * Crosswalk signal pill in panel header (matches vehicle phase pills).
+ * @param {import('./trafficController.js').TrafficController} tc
+ * @param {HTMLElement | null} pedPhaseEl
+ * @param {HTMLElement | null} pedDotEl
+ */
+function syncPedPhaseIndicator(tc, pedPhaseEl, pedDotEl) {
+  if (!pedPhaseEl) return;
+
+  if (tc.pedState === PED_STATE.IDLE || tc.pedState === PED_STATE.END) {
+    pedPhaseEl.textContent = 'Ready';
+    if (pedDotEl) pedDotEl.className = 'phase-dot';
+    return;
+  }
+  if (tc.pedState === PED_STATE.WALK) {
+    pedPhaseEl.textContent = 'WALK';
+    if (pedDotEl) pedDotEl.className = 'phase-dot green';
+    return;
+  }
+  if (tc.pedState === PED_STATE.FLASHING_DONT_WALK) {
+    pedPhaseEl.textContent = "Don't walk";
+    if (pedDotEl) pedDotEl.className = 'phase-dot amber';
+    return;
+  }
+  pedPhaseEl.textContent = tc.pedState;
+  if (pedDotEl) pedDotEl.className = 'phase-dot';
+}
+
+/**
+ * Derive per-button UI from trafficController ground truth.
+ * @param {import('./trafficController.js').TrafficController} tc
+ * @param {HTMLButtonElement[]} pedButtons
+ */
+function syncPedButtons(tc, pedButtons) {
+  const cycleActive =
+    tc.pedState === PED_STATE.WALK || tc.pedState === PED_STATE.FLASHING_DONT_WALK;
+
+  for (let i = 0; i < pedButtons.length; i++) {
+    const btn = pedButtons[i];
+    const approach = btn.dataset.pedApproach;
+    if (!approach) continue;
+
+    const walkToward = PED_WALK_TOWARD[approach] ?? approach;
+    const leg = PED_CROSSWALK_LEG[approach] ?? '';
+
+    const dirEl = btn.querySelector('.ped-btn__dir');
+    if (dirEl) dirEl.textContent = walkToward;
+
+    const requested = Boolean(tc.pedRequests[approach]);
+    const cell = btn.closest('.ped-btn-cell');
+    const statusEl = cell?.querySelector('.ped-btn__status');
+
+    let stateClass = 'ped-btn--default';
+    let disabled = false;
+    let statusText = '';
+    let title = `Request crossing walking toward ${walkToward} (${leg} crosswalk)`;
+
+    if (cycleActive && requested && tc.pedState === PED_STATE.WALK) {
+      stateClass = 'ped-btn--active';
+      disabled = true;
+      statusText = 'WALK';
+      title = `${walkToward}bound crossing — walk`;
+    } else if (cycleActive && requested && tc.pedState === PED_STATE.FLASHING_DONT_WALK) {
+      stateClass = 'ped-btn--flashing';
+      disabled = true;
+      statusText = "Don't walk";
+      title = `${walkToward}bound crossing — flashing don't walk`;
+    } else if (cycleActive) {
+      stateClass = 'ped-btn--disabled';
+      disabled = true;
+      title = 'Pedestrian cycle in progress';
+    } else if (requested) {
+      stateClass = 'ped-btn--requested';
+      disabled = true;
+      statusText = 'Waiting…';
+      title = `Walking toward ${walkToward} requested — waiting for all-red`;
+    }
+
+    btn.classList.remove(...PED_BTN_STATE_CLASSES);
+    btn.classList.add('ped-btn', stateClass);
+    btn.disabled = disabled;
+    btn.title = title;
+    btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    btn.setAttribute(
+      'aria-label',
+      disabled ? title : `Request crossing walking toward ${walkToward}, ${leg} leg`
+    );
+
+    if (statusEl) {
+      statusEl.textContent = statusText;
+      statusEl.hidden = statusText.length === 0;
+    }
+  }
+}
 
 /** @param {import('./trafficController.js').PhaseDef} phase */
 function formatPhaseLabel(phase) {
@@ -108,6 +227,8 @@ export function initUI({ getSim, onReset, onStep }) {
     currName: document.getElementById('curr-name'),
     currDot: document.getElementById('curr-dot'),
     currTime: document.getElementById('curr-time'),
+    pedPhase: document.getElementById('ped-phase'),
+    pedDot: document.getElementById('ped-dot'),
     nextName: document.getElementById('next-name'),
     nextDot: document.getElementById('next-dot'),
     nextTiming: document.getElementById('next-timing'),
@@ -167,6 +288,9 @@ export function initUI({ getSim, onReset, onStep }) {
       els.currTime.textContent = `${tc.phaseElapsedTime.toFixed(1).padStart(4, '0')}s`;
     }
 
+    syncPedPhaseIndicator(tc, els.pedPhase, els.pedDot);
+    syncPedButtons(tc, pedButtons);
+
     if (els.nextName) els.nextName.textContent = formatPhaseLabel(nextPhase);
     if (els.nextDot) els.nextDot.className = `phase-dot ${phaseDotClass(nextPhase)}`;
     if (els.nextTimingLabel) {
@@ -198,6 +322,26 @@ export function initUI({ getSim, onReset, onStep }) {
 
   setPlaying(true);
   setSpeed(1);
+
+  const pedButtons = Array.from(document.querySelectorAll('[data-ped-approach]')).filter(
+    (el) => el instanceof HTMLButtonElement
+  );
+
+  const pedActions = document.querySelector('.ped-compass');
+  pedActions?.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-ped-approach]') : null;
+    if (!(btn instanceof HTMLButtonElement) || btn.disabled) return;
+    const approach = btn.dataset.pedApproach;
+    if (!approach) return;
+    const tc = getSim().trafficController;
+    if (!tc.requestPedestrian(approach)) return;
+    syncPedPhaseIndicator(tc, els.pedPhase, els.pedDot);
+    syncPedButtons(tc, pedButtons);
+  });
+
+  const tc0 = getSim().trafficController;
+  syncPedPhaseIndicator(tc0, els.pedPhase, els.pedDot);
+  syncPedButtons(tc0, pedButtons);
 
   els.playBtn?.addEventListener('click', () => setPlaying(paused));
   els.stepBtn?.addEventListener('click', step);

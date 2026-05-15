@@ -70,6 +70,14 @@ export const PHASE = {
   MAX_GREEN_LEFT: 20,
 };
 
+/** Exclusive pedestrian phase (US-style); actual seconds chosen per cycle via sim.rng. */
+export const PEDESTRIAN = {
+  WALK_MIN: 6,
+  WALK_MAX: 10,
+  FLASH_DONT_WALK_MIN: 5,
+  FLASH_DONT_WALK_MAX: 8,
+};
+
 /** Main signal lamp states (avoid magic strings in controller / consumers). */
 export const MAIN_SIGNAL = {
   GREEN: 'green',
@@ -134,7 +142,10 @@ function buildSignalConstants() {
     POST_H: 8,
     ARROW_SCALE: 1,
     LABEL_FONT: '600 10px ui-sans-serif, system-ui, sans-serif',
-    LABEL_GAP: 6,
+    /** Space below housing before travel-direction label. */
+    LABEL_GAP: -25,
+    /** Shift label along world axis from intersection center → signal (clears corner wait pads). */
+    LABEL_OUTWARD_NUDGE: 12,
   };
 }
 

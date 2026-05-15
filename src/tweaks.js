@@ -105,6 +105,26 @@ function syncTweaksUI(tweaksEl) {
   }
 }
 
+function syncTweaksChrome(tweaksEl, expanded) {
+  const expandBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('tw-expand'));
+  const closeBtn = /** @type {HTMLButtonElement | null} */ (document.getElementById('tw-close'));
+  if (!tweaksEl) return;
+
+  tweaksEl.classList.toggle('is-open', expanded);
+  tweaksEl.classList.toggle('tweaks--minimized', !expanded);
+
+  if (expandBtn) {
+    expandBtn.hidden = expanded;
+    expandBtn.textContent = '▲';
+    expandBtn.setAttribute('aria-hidden', expanded ? 'true' : 'false');
+    expandBtn.title = 'Expand tweaks';
+  }
+  if (closeBtn) {
+    closeBtn.hidden = !expanded;
+    closeBtn.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+  }
+}
+
 /**
  * @param {import('./renderer.js').Renderer} renderer
  */
@@ -115,10 +135,8 @@ export function initTweaks(renderer) {
   applyTheme(renderer);
   applyDiagnostics();
 
-  function showTweaks(show) {
-    if (!tweaksEl) return;
-    tweaksEl.hidden = !show;
-    tweaksEl.classList.toggle('is-open', show);
+  function setExpanded(expanded) {
+    syncTweaksChrome(tweaksEl, expanded);
   }
 
   tweaksEl?.addEventListener('click', (e) => {
@@ -133,17 +151,33 @@ export function initTweaks(renderer) {
       return;
     }
     if (e.target instanceof Element && e.target.closest('#tw-close')) {
-      showTweaks(false);
+      setExpanded(false);
+      return;
+    }
+    if (e.target instanceof Element && e.target.closest('#tw-expand')) {
+      setExpanded(true);
+      return;
     }
   });
 
-  hdrEl?.addEventListener('click', (e) => {
-    if (e.target instanceof Element && e.target.closest('#tw-close')) return;
-    if (tweaksEl?.hidden) showTweaks(true);
+  tweaksEl?.querySelector('.tweaks-head')?.addEventListener('click', (e) => {
+    if (!(e.target instanceof Element)) return;
+    if (e.target.closest('.closex')) return;
+    if (tweaksEl.classList.contains('tweaks--minimized')) setExpanded(true);
+  });
+
+  hdrEl?.addEventListener('click', () => {
+    if (tweaksEl?.classList.contains('tweaks--minimized')) setExpanded(true);
   });
 
   syncTweaksUI(tweaksEl);
-  showTweaks(true);
+  setExpanded(true);
 
-  return { showTweaks, tweaks };
+  return {
+    /** @deprecated use class tweaks--minimized / is-open on #tweaks */
+    showTweaks(expanded) {
+      setExpanded(expanded);
+    },
+    tweaks,
+  };
 }

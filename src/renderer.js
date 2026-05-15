@@ -1,6 +1,7 @@
 import { WORLD, CAR, COLORS, MARKING, SIGNAL, VIEW } from './constants.js';
 import { getApproachDirectionLabel } from './geometry.js';
 import { DEBUG_INTERSECTION } from './intersectionController.js';
+import { PedestrianRenderer, drawWaitingPads } from './renderer/pedestrianRenderer.js';
 import { showCrosswalks, getSceneColors } from './tweaks.js';
 
 /** Full viewport width; square display (world is 1:1). */
@@ -252,6 +253,8 @@ function drawStaticIntersection(ctx, geometry) {
     drawPavementArrow(ctx, arrows[a]);
   }
 
+  drawWaitingPads(ctx);
+
   ctx.restore();
 }
 
@@ -447,7 +450,20 @@ function drawSignalHead(ctx, layout, approachLights) {
   drawLamp(ctx, lampX[2], 0, lampR, COLORS.SIGNAL_YELLOW, main === 'yellow');
   drawLamp(ctx, lampX[3], 0, lampR, COLORS.SIGNAL_GREEN, main === 'green');
 
+  const wx = layout.x - WORLD.CENTER;
+  const wy = layout.y - WORLD.CENTER;
+  const wlen = Math.hypot(wx, wy) || 1;
+  const ux = wx / wlen;
+  const uy = wy / wlen;
+  const nudge = SIGNAL.LABEL_OUTWARD_NUDGE;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const lx = nudge * (ux * cos + uy * sin);
+  const ly = nudge * (-ux * sin + uy * cos);
+  ctx.save();
+  ctx.translate(lx, ly);
   drawApproachLabel(ctx, approach, h);
+  ctx.restore();
 
   ctx.restore();
 }
@@ -581,6 +597,7 @@ export class Renderer {
     this.viewportEl = null;
     this.compassNeedleEl = null;
     this.view = { panX: 0, panY: 0, zoom: 1, rotation: 0 };
+    this.pedestrianRenderer = new PedestrianRenderer();
     this._applyDisplaySize();
   }
 
@@ -921,14 +938,19 @@ export class Renderer {
 
   /**
    * @param {import('./simulation.js').Simulation} sim
+   * @param {number} [dt] seconds since last frame (0 when paused)
    */
-  draw(sim) {
+  draw(sim, dt = 0) {
+    const tc = sim.trafficController;
+    this.pedestrianRenderer.update(dt, tc);
+
     const L = WORLD.SIZE;
     const fg = this.fgCtx;
     fg.clearRect(0, 0, L, L);
     fg.save();
     fg.translate(0.5, 0.5);
     drawCars(fg, sim.allCars, performance.now() / 1000);
+    this.pedestrianRenderer.draw(fg, tc);
     drawIntersectionDebug(fg, sim);
     drawHUD(fg, sim.stats, sim.lights);
     fg.restore();

@@ -5,6 +5,7 @@
 
 import {
   PHASE,
+  PEDESTRIAN,
   MAIN_SIGNAL,
   LEFT_ARROW,
   SIGNAL_AXIS,
@@ -14,6 +15,14 @@ import {
 import { readSensors } from './sensorSystem.js';
 
 const APPROACHES = ['N', 'S', 'E', 'W'];
+
+/** Pedestrian signal + crosswalk request state (vehicle phase freezes while not IDLE). */
+export const PED_STATE = {
+  IDLE: 'IDLE',
+  WALK: 'WALK',
+  FLASHING_DONT_WALK: 'FLASHING_DONT_WALK',
+  END: 'END',
+};
 
 /** Max simulation time applied per internal tick (100ms) — avoids phase skips on lag/tab hide. */
 const MAX_UPDATE_STEP_SEC = 0.1;
@@ -251,6 +260,18 @@ function normalizeDirection(direction) {
   return key;
 }
 
+/**
+ * Full vehicle stop: all approaches show red ball and no left-turn service.
+ * @param {Record<string, { main: string, leftArrow: string }>} lights
+ */
+function isFullVehicleStop(lights) {
+  for (let i = 0; i < APPROACHES.length; i++) {
+    const L = lights[APPROACHES[i]];
+    if (L.main !== MAIN_SIGNAL.RED || L.leftArrow !== LEFT_ARROW.OFF) return false;
+  }
+  return true;
+}
+
 export class TrafficController {
   constructor() {
     this.phaseIndex = 0;
@@ -259,6 +280,14 @@ export class TrafficController {
     this.currentPhaseMax = PHASES[0].max;
     /** @type {Record<string, { main: string, leftArrow: string }>} */
     this.lights = this._computeLights();
+    /** @type {'IDLE' | 'WALK' | 'FLASHING_DONT_WALK' | 'END'} */
+    this.pedState = PED_STATE.IDLE;
+    this.pedPhaseElapsed = 0;
+    /** Seconds — sampled once per pedestrian cycle. */
+    this._pedWalkDuration = PEDESTRIAN.WALK_MIN;
+    this._pedFlashDuration = PEDESTRIAN.FLASH_DONT_WALK_MIN;
+    /** Per-side crosswalk push-button latch (reset after pedestrian END). */
+    this.pedRequests = { N: false, S: false, E: false, W: false };
     this._assertRuntimeInvariants();
   }
 
@@ -278,7 +307,116 @@ export class TrafficController {
 
   /** Seconds left in the current phase (for HUD / debug UI). */
   get phaseTimeRemaining() {
+    if (this.pedState === PED_STATE.WALK) {
+      return Math.max(0, this._pedWalkDuration - this.pedPhaseElapsed);
+    }
+    if (this.pedState === PED_STATE.FLASHING_DONT_WALK) {
+      return Math.max(0, this._pedFlashDuration - this.pedPhaseElapsed);
+    }
+    if (this.pedState === PED_STATE.END) return 0;
     return Math.max(0, this.currentPhaseMax - this.phaseElapsedTime);
+  }
+
+  /** Whether any crosswalk button is latched since last cycle completion. */
+  _anyPedRequest() {
+    return (
+      this.pedRequests.N
+      || this.pedRequests.S
+      || this.pedRequests.E
+      || this.pedRequests.W
+    );
+  }
+
+  _resetPedRequests() {
+    this.pedRequests.N = false;
+    this.pedRequests.S = false;
+    this.pedRequests.E = false;
+    this.pedRequests.W = false;
+  }
+
+  /**
+   * Crosswalk push — latched until the pedestrian cycle completes.
+   * @returns {boolean} true if the request was newly latched
+   */
+  requestPedestrian(approach) {
+    const key = normalizeDirection(approach);
+    if (!APPROACHES.includes(key)) return false;
+    if (this.pedRequests[key]) return false;
+    if (
+      this.pedState === PED_STATE.WALK
+      || this.pedState === PED_STATE.FLASHING_DONT_WALK
+    ) {
+      return false;
+    }
+    this.pedRequests[key] = true;
+    return true;
+  }
+
+  /**
+   * @param {import('./simulation.js').Simulation} sim
+   */
+  _samplePedestrianDurations(sim) {
+    const r = sim.rng;
+    const wSpan = PEDESTRIAN.WALK_MAX - PEDESTRIAN.WALK_MIN;
+    const fSpan = PEDESTRIAN.FLASH_DONT_WALK_MAX - PEDESTRIAN.FLASH_DONT_WALK_MIN;
+    this._pedWalkDuration = PEDESTRIAN.WALK_MIN + r() * wSpan;
+    this._pedFlashDuration = PEDESTRIAN.FLASH_DONT_WALK_MIN + r() * fSpan;
+  }
+
+  /**
+   * @param {import('./simulation.js').Simulation} sim
+   */
+  _beginPedestrianCycle(sim) {
+    assert(this.pedState === PED_STATE.IDLE, 'pedestrian cycle must start from IDLE');
+    assert(isFullVehicleStop(this.lights), 'pedestrian cycle requires full vehicle red');
+    assert(this._anyPedRequest(), 'pedestrian cycle requires a latched request');
+    this._samplePedestrianDurations(sim);
+    this.pedPhaseElapsed = 0;
+    this.pedState = PED_STATE.WALK;
+    if (DEBUG_PHASE_TRANSITIONS) {
+      console.log('Pedestrian:', this.pedState, this._pedWalkDuration.toFixed(2), 's walk');
+    }
+  }
+
+  /**
+   * @param {import('./simulation.js').Simulation} sim
+   */
+  _maybeStartPedestrian(sim) {
+    if (this.pedState !== PED_STATE.IDLE) return;
+    if (!isFullVehicleStop(this.lights) || !this._anyPedRequest()) return;
+    this._beginPedestrianCycle(sim);
+  }
+
+  /**
+   * @param {import('./simulation.js').Simulation} _sim
+   * @param {number} delta
+   */
+  _tickPedestrian(_sim, delta) {
+    this.pedPhaseElapsed += delta;
+
+    if (this.pedState === PED_STATE.WALK) {
+      if (this.pedPhaseElapsed >= this._pedWalkDuration - PHASE_TIMER_EPSILON) {
+        this.pedState = PED_STATE.FLASHING_DONT_WALK;
+        this.pedPhaseElapsed = 0;
+        if (DEBUG_PHASE_TRANSITIONS) {
+          console.log('Pedestrian:', this.pedState, this._pedFlashDuration.toFixed(2), 's flash');
+        }
+      }
+    } else if (this.pedState === PED_STATE.FLASHING_DONT_WALK) {
+      if (this.pedPhaseElapsed >= this._pedFlashDuration - PHASE_TIMER_EPSILON) {
+        this.pedState = PED_STATE.END;
+        this.pedPhaseElapsed = 0;
+      }
+    }
+
+    if (this.pedState === PED_STATE.END) {
+      this._resetPedRequests();
+      this.pedState = PED_STATE.IDLE;
+      this.pedPhaseElapsed = 0;
+      if (DEBUG_PHASE_TRANSITIONS) {
+        console.log('Pedestrian: cycle complete — resume vehicles');
+      }
+    }
   }
 
   /**
@@ -368,6 +506,10 @@ export class TrafficController {
   canMove(direction, movementType, car = null) {
     const key = normalizeDirection(direction);
 
+    if (this.pedState !== PED_STATE.IDLE) {
+      return false;
+    }
+
     if (movementType === 'straight') {
       if (key === 'NS') return this.axisMainStates.ns === MAIN_SIGNAL.GREEN;
       if (key === 'EW') return this.axisMainStates.ew === MAIN_SIGNAL.GREEN;
@@ -450,6 +592,8 @@ export class TrafficController {
       const threshold = this._advanceThreshold(demand);
       const excess = Math.max(0, this.phaseElapsedTime - threshold);
       this._advancePhase(excess);
+      this._maybeStartPedestrian(sim);
+      if (this.pedState !== PED_STATE.IDLE) break;
       demand = readSensors(sim);
     }
 
@@ -474,7 +618,12 @@ export class TrafficController {
     let remaining = delta;
     while (remaining > 0) {
       const step = Math.min(remaining, MAX_UPDATE_STEP_SEC);
-      this._tickPhaseTimer(sim, step);
+      if (this.pedState !== PED_STATE.IDLE) {
+        this._tickPedestrian(sim, step);
+      } else {
+        this._tickPhaseTimer(sim, step);
+        this._maybeStartPedestrian(sim);
+      }
       remaining -= step;
     }
 

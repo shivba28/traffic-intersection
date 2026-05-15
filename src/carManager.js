@@ -4,6 +4,7 @@
  */
 
 import { CAR, SPAWN, COLORS, DEBUG_LANE_QUEUES } from './constants.js';
+import { PED_STATE } from './trafficController.js';
 import { getSpawnInterval } from './tweaks.js';
 import {
   APPROACH_ORDER,
@@ -507,6 +508,14 @@ function updateCar(sim, car, delta) {
 
   const prevSpeed = car.speed ?? 0;
   const ic = sim.intersectionController;
+
+  // Exclusive pedestrian phase: freeze vehicles already in the box (canMove alone is not enough).
+  if (sim.trafficController.pedState !== PED_STATE.IDLE) {
+    if (car.state === 'crossing' || car.state === 'exiting') {
+      car.speed = 0;
+      return;
+    }
+  }
 
   if (car.state === 'crossing') {
     advanceCrossingPlatoon(sim, car, delta, ic);

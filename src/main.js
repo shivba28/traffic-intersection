@@ -5,6 +5,8 @@ import { Renderer } from './renderer.js';
 import { initUI } from './ui.js';
 import { initTweaks } from './tweaks.js';
 
+import { initDraggablePanel } from './draggablePanel.js';
+
 function parseSeedFromUrl() {
   const raw = new URLSearchParams(window.location.search).get('seed');
   if (raw == null || raw === '') return undefined;
@@ -27,6 +29,11 @@ const renderer = new Renderer(fg, bg, signals);
 renderer.init(geometry);
 if (container) {
   renderer.attachViewportControls(container);
+  const crossPanel = document.getElementById('crosswalk-panel');
+  const dragHandle = document.getElementById('crosswalk-drag-handle');
+  if (crossPanel && dragHandle) {
+    initDraggablePanel(crossPanel, dragHandle, container);
+  }
 }
 initTweaks(renderer);
 
@@ -46,6 +53,7 @@ const ui = initUI({
   getSim: () => sim,
   onReset: () => {
     sim.reset();
+    renderer.pedestrianRenderer.reset();
     lastTime = null;
   },
   onStep: () => {
@@ -54,15 +62,16 @@ const ui = initUI({
 });
 
 function tick(now) {
+  let frameDt = 0;
   if (!ui.paused) {
     if (lastTime === null) lastTime = now;
     const rawDelta = (now - lastTime) / 1000;
     lastTime = now;
-    const delta = Math.min(rawDelta, LOOP.MAX_DELTA) * ui.speedMultiplier;
-    sim.update(delta);
+    frameDt = Math.min(rawDelta, LOOP.MAX_DELTA) * ui.speedMultiplier;
+    sim.update(frameDt);
   }
   ui.update(sim);
-  renderer.draw(sim);
+  renderer.draw(sim, frameDt);
   requestAnimationFrame(tick);
 }
 

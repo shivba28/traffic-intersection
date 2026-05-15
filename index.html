@@ -21,6 +21,78 @@
         <canvas id="fg"></canvas>
         <canvas id="signals" aria-hidden="true"></canvas>
       </div>
+
+      <!-- Floating crosswalk controls (draggable over the canvas) -->
+      <div
+        id="crosswalk-panel"
+        class="floating-panel panel crosswalk-float"
+        aria-label="Crosswalk controls"
+      >
+        <div class="floating-panel__drag" id="crosswalk-drag-handle" title="Drag to move">
+          <span class="floating-panel__drag-grip" aria-hidden="true"></span>
+          <span class="floating-panel__drag-label">Crosswalk</span>
+        </div>
+        <div class="ped-panel ped-panel--floating">
+          <div class="ped-panel__head ped-panel__head--floating">
+            <span class="label ped-panel__signal-label">Signal</span>
+            <span class="phase-pill ped-panel__phase">
+              <span class="phase-dot" id="ped-dot" aria-hidden="true"></span>
+              <span id="ped-phase">Ready</span>
+            </span>
+          </div>
+          <div class="ped-compass" role="group" aria-label="Crosswalk requests">
+            <div class="ped-compass__grid">
+                  <div class="ped-btn-cell ped-compass__slot ped-compass__slot--n">
+                    <button
+                      type="button"
+                      class="ped-btn ped-btn--default"
+                      data-ped-approach="N"
+                      aria-label="Request crossing walking toward East, north leg"
+                    >
+                      <span class="ped-btn__dir" aria-hidden="true">East</span>
+                    </button>
+                <span class="ped-btn__status" aria-live="polite"></span>
+              </div>
+                  <div class="ped-btn-cell ped-compass__slot ped-compass__slot--w">
+                    <button
+                      type="button"
+                      class="ped-btn ped-btn--default"
+                      data-ped-approach="W"
+                      aria-label="Request crossing walking toward North, west leg"
+                    >
+                      <span class="ped-btn__dir" aria-hidden="true">North</span>
+                    </button>
+                <span class="ped-btn__status" aria-live="polite"></span>
+              </div>
+              <div class="ped-compass__hub" aria-hidden="true">
+                <span class="ped-compass__hub-mark">✚</span>
+              </div>
+                  <div class="ped-btn-cell ped-compass__slot ped-compass__slot--e">
+                    <button
+                      type="button"
+                      class="ped-btn ped-btn--default"
+                      data-ped-approach="E"
+                      aria-label="Request crossing walking toward South, east leg"
+                    >
+                      <span class="ped-btn__dir" aria-hidden="true">South</span>
+                    </button>
+                <span class="ped-btn__status" aria-live="polite"></span>
+              </div>
+                  <div class="ped-btn-cell ped-compass__slot ped-compass__slot--s">
+                    <button
+                      type="button"
+                      class="ped-btn ped-btn--default"
+                      data-ped-approach="S"
+                      aria-label="Request crossing walking toward West, south leg"
+                    >
+                      <span class="ped-btn__dir" aria-hidden="true">West</span>
+                    </button>
+                <span class="ped-btn__status" aria-live="polite"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <aside class="sim-ui" aria-label="Simulation interface">
@@ -83,11 +155,32 @@
 
     </aside>
 
-    <div class="corner bl panel tweaks" id="tweaks">
-      <h3>
-        Tweaks
-        <button type="button" class="closex" id="tw-close" title="Close" aria-label="Close tweaks">✕</button>
+    <div class="corner bl panel tweaks is-open" id="tweaks">
+      <h3 class="tweaks-head">
+        <span class="tweaks-head__title">Tweaks</span>
+        <div class="tweaks-head__actions">
+          <button
+            type="button"
+            class="closex tweaks-expand"
+            id="tw-expand"
+            hidden
+            title="Expand tweaks"
+            aria-label="Expand tweaks panel"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            class="closex"
+            id="tw-close"
+            title="Minimize"
+            aria-label="Minimize tweaks panel"
+          >
+            ✕
+          </button>
+        </div>
       </h3>
+      <div class="tweaks-body">
       <div class="tw-row">
         <div class="tw-label">Theme</div>
         <div class="seg" data-tweak="theme">
@@ -116,6 +209,7 @@
           <button type="button" data-val="on">Show</button>
           <button type="button" data-val="off">Hide</button>
         </div>
+      </div>
       </div>
     </div>
 
