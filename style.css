@@ -1,0 +1,42 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body {
+  margin: 0;
+  background: #1a1a1a;
+}
+
+#canvas-container {
+  position: relative;
+  margin: 0 auto;
+}
+
+#bg,
+#fg,
+#signals {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+}
+
+#bg {
+  z-index: 0;
+}
+
+#fg {
+  z-index: 1;
+}
+
+#signals {
+  z-index: 2;
+  pointer-events: none;
+}
