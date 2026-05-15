@@ -21,7 +21,7 @@ import {
 } from './geometry.js';
 
 /** Center-to-center spacing while queued, on the path, and on the outbound leg. */
-const PLATOON_SPACING = CAR.LENGTH + CAR.FOLLOW_GAP;
+const PLATOON_SPACING = CAR.LENGTH + CAR.CROSSING_FOLLOW_GAP;
 
 function pickCarColor(rng) {
   const palette = COLORS.CAR;
@@ -59,19 +59,28 @@ function movementTypeFromLane(lane) {
   return lane.type === 'left' ? 'left' : 'straight';
 }
 
-/** Nearest car ahead in the same lane on the inbound approach (exiting ignored). */
-function carAhead(car, cars) {
+/** Center-to-center separation to the car ahead (approach axis and path arc when on maneuver). */
+function separationToAhead(car, other) {
   const f = getApproachForward(car.approach);
+  const along = (other.x - car.x) * f.x + (other.y - car.y) * f.y;
+  if (other.state === 'crossing' || other.state === 'exiting') {
+    const progress = maneuverProgress(other) - maneuverProgress(car);
+    return along > 0.5 ? Math.min(along, progress) : progress;
+  }
+  return along;
+}
+
+/** Nearest car ahead in the same lane (inbound queue and cars on the turn / exit). */
+function carAhead(car, cars) {
   let ahead = null;
-  let minAlong = Infinity;
+  let minSep = Infinity;
   for (let i = 0; i < cars.length; i++) {
     const other = cars[i];
     if (other.id === car.id) continue;
     if (other.laneId !== car.laneId) continue;
-    if (other.state === 'exiting' || other.state === 'crossing') continue;
-    const along = (other.x - car.x) * f.x + (other.y - car.y) * f.y;
-    if (along > 0.5 && along < minAlong) {
-      minAlong = along;
+    const sep = separationToAhead(car, other);
+    if (sep > 0.5 && sep < minSep) {
+      minSep = sep;
       ahead = other;
     }
   }
@@ -149,7 +158,7 @@ function crossingEntryAllowed(car, cars) {
     return followGapRoom(car, ahead) > 0;
   }
 
-  return followGapRoom(car, ahead) > 0.5;
+  return followGapRoom(car, ahead) > 0;
 }
 
 function platoonArcCap(car, cars) {
@@ -159,21 +168,27 @@ function platoonArcCap(car, cars) {
 }
 
 function pathBlendFactor(car) {
-  if (!usesCrossingAccelRamp(car) || !car.pathArc) return 1;
+  if (!usesCrossingPathBlend(car) || !car.pathArc) return 1;
   const s = pathArcLengthAtT(car.pathArc, car.pathT || 0);
   return Math.min(1, s / CAR.CROSSING_PATH_BLEND_DIST);
 }
 
-function applyPathPosition(car, path, t) {
+function snapCarOntoPath(car, path, t) {
   car.pathT = t;
   const pt = evalPath(path, t);
+  car.x = pt.x;
+  car.y = pt.y;
+  car.heading = pathTangentHeading(path, t);
+}
+
+function applyPathPosition(car, path, t) {
   const blend = pathBlendFactor(car);
   if (blend >= 1) {
-    car.x = pt.x;
-    car.y = pt.y;
-    car.heading = pathTangentHeading(path, t);
+    snapCarOntoPath(car, path, t);
     return;
   }
+  car.pathT = t;
+  const pt = evalPath(path, t);
   car.x += (pt.x - car.x) * blend;
   car.y += (pt.y - car.y) * blend;
   const pathH = pathTangentHeading(path, t);
@@ -183,9 +198,20 @@ function applyPathPosition(car, path, t) {
   car.heading += diff * blend;
 }
 
-/** Close to stop line and on the crossing path — safe to enter without a position jump. */
+/** Right turns ease onto the curve; straight/left snap once aligned at the stop. */
+function usesCrossingPathBlend(car) {
+  return car.laneType === 'right';
+}
+
+/** Straight and left: snap at crossing entry instead of blending from approach. */
+function snapsOntoCrossingPath(car) {
+  return car.laneType === 'straight' || car.laneType === 'left';
+}
+
+/** At stop and on the lane path (straight/left — avoids warp on entry). */
 function isReadyToEnterCrossing(car, lane, path) {
   if (!path) return false;
+  if (!snapsOntoCrossingPath(car)) return true;
   if (distCenterToStop(car, lane) > CAR.STOP_SETTLE_EPSILON) return false;
   const t = estimatePathT(path, car.x, car.y);
   const pt = evalPath(path, t);
@@ -194,9 +220,9 @@ function isReadyToEnterCrossing(car, lane, path) {
   return dx * dx + dy * dy <= CAR.LENGTH * CAR.LENGTH;
 }
 
-/** Main-signal movements (straight + right): ease speed up at crossing start. */
+/** Right-turn crossing: ease speed up at curve entry. */
 function usesCrossingAccelRamp(car) {
-  return car.movementType === 'straight';
+  return car.laneType === 'right';
 }
 
 function advanceCrossingSpeed(car, delta) {
@@ -218,12 +244,13 @@ function advanceCrossingPlatoon(sim, car, delta, ic) {
 
   const sBefore = pathArcLengthAtT(car.pathArc, car.pathT || 0);
   const sCap = platoonArcCap(car, sim.cars);
-  const speed = advanceCrossingSpeed(car, delta);
-  const ds = speed * delta;
+  // Full arc rate for platoon stagger; ramp only affects displayed speed / blend.
+  const ds = CAR.MAX_SPEED * delta;
   const s = Math.min(sBefore + ds, sCap, car.pathLength);
 
   applyPathPosition(car, path, pathTAtArcLength(car.pathArc, s));
-  car.speed = s > sBefore + 1e-4 ? speed : 0;
+  const rampSpeed = advanceCrossingSpeed(car, delta);
+  car.speed = s > sBefore + 1e-4 ? rampSpeed : 0;
 
   if (car.movementType === 'left' && s >= PLATOON_SPACING) {
     ic.releaseLeftTurnSlot(car);
@@ -258,7 +285,9 @@ function advanceExitingPlatoon(car, cars, delta) {
 
 function initialCrossingArc(sim, car, path) {
   const table = buildPathArcTable(path);
-  const fromPos = pathArcLengthAtT(table, estimatePathT(path, car.x, car.y));
+  const fromPos = snapsOntoCrossingPath(car)
+    ? 0
+    : pathArcLengthAtT(table, estimatePathT(path, car.x, car.y));
   const lead = crossingLead(car, sim.cars);
   if (!lead) return fromPos;
   const leadTable = lead.pathArc || table;
@@ -277,6 +306,9 @@ function tryBeginCrossing(sim, car) {
   const path = lane ? getPathForCar(car, lane) : null;
   const startArc = path ? initialCrossingArc(sim, car, path) : null;
   sim.intersectionController.beginCrossing(sim, car, startArc ?? undefined);
+  if (snapsOntoCrossingPath(car) && car.crossingPath) {
+    snapCarOntoPath(car, car.crossingPath, car.pathT || 0);
+  }
   return true;
 }
 
@@ -329,9 +361,7 @@ function distCenterToStop(car, lane) {
 /** Room to move before violating minimum follow gap behind the car ahead. */
 function followGapRoom(car, ahead) {
   if (!ahead) return Infinity;
-  const f = getApproachForward(car.approach);
-  const along = (ahead.x - car.x) * f.x + (ahead.y - car.y) * f.y;
-  return along - CAR.LENGTH - CAR.FOLLOW_GAP;
+  return separationToAhead(car, ahead) - CAR.LENGTH - CAR.FOLLOW_GAP;
 }
 
 function speedForStopApproach(dist) {
@@ -377,46 +407,47 @@ function updateInbound(sim, car, lane, delta) {
   const ahead = carAhead(car, sim.cars);
   const gapRoom = followGapRoom(car, ahead);
   const green = sim.trafficController.canMove(car.approach, car.movementType);
+  const path = getPathForCar(car, lane);
 
   if (car.state === 'stopped') {
-    const lead = isLeadInLane(car, sim.cars);
-    if (lead && distToStop <= CAR.STOP_SETTLE_EPSILON) {
-      if (!green) settleAtStop(car, lane);
-      else holdInQueue(car);
-    } else {
-      holdInQueue(car);
+    if (!green) {
+      const lead = isLeadInLane(car, sim.cars);
+      if (lead && distToStop <= CAR.STOP_SETTLE_EPSILON) {
+        settleAtStop(car, lane);
+      } else {
+        holdInQueue(car);
+      }
     }
-    const path = getPathForCar(car, lane);
-    if (
-      car.movementType !== 'straight' ||
-      isReadyToEnterCrossing(car, lane, path)
-    ) {
+    if (isReadyToEnterCrossing(car, lane, path)) {
       if (tryBeginCrossing(sim, car)) return;
     }
-    // Resume creeping when the car ahead advances and opens follow room.
-    if (gapRoom > 0.5) {
+    if (gapRoom > 0) {
       car.state = 'moving';
     }
     return;
   }
 
-  const path = getPathForCar(car, lane);
   if (green && crossingEntryAllowed(car, sim.cars)) {
-    const ready =
-      car.movementType !== 'straight' || isReadyToEnterCrossing(car, lane, path);
-    if (ready && tryBeginCrossing(sim, car)) return;
+    if (isReadyToEnterCrossing(car, lane, path) && tryBeginCrossing(sim, car)) return;
   }
 
-  const stopRoom = Math.max(0, distToStop - CAR.STOP_SETTLE_EPSILON);
-  const spaceRoom = Math.min(stopRoom, gapRoom);
-  const brakeDist = Math.min(distToStop, gapRoom);
+  // On green, yield only to the car ahead — not the stop line (no "stop sign" pause).
+  const obeyStopLine = !green;
+  const stopRoom = obeyStopLine
+    ? Math.max(0, distToStop - CAR.STOP_SETTLE_EPSILON)
+    : Infinity;
+  let spaceRoom = obeyStopLine ? Math.min(stopRoom, gapRoom) : gapRoom;
+  // Straight/left: don't coast past the line on green — enter the path instead of warping.
+  if (green && snapsOntoCrossingPath(car)) {
+    spaceRoom = Math.min(spaceRoom, Math.max(0, distToStop + CAR.STOP_SETTLE_EPSILON));
+  }
+  const brakeDist = obeyStopLine ? Math.min(distToStop, gapRoom) : gapRoom;
 
   if (spaceRoom <= 0) {
     car.speed = 0;
     if (distToStop <= CAR.STOP_SETTLE_EPSILON) {
       if (tryBeginCrossing(sim, car)) return;
       if (!green) markWaiting(car, lane, sim.cars);
-      else holdInQueue(car);
     } else {
       car.state = 'moving';
     }
@@ -432,7 +463,6 @@ function updateInbound(sim, car, lane, delta) {
   if (distToStop <= CAR.STOP_SETTLE_EPSILON) {
     if (tryBeginCrossing(sim, car)) return;
     if (!green) markWaiting(car, lane, sim.cars);
-    else holdInQueue(car);
   }
 }
 

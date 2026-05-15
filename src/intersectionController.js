@@ -224,7 +224,7 @@ export class IntersectionController {
     if (
       car.pathArc
       && car.movementType === 'left'
-      && pathArcLengthAtT(car.pathArc, car.pathT) >= CAR.LENGTH + CAR.FOLLOW_GAP
+      && pathArcLengthAtT(car.pathArc, car.pathT) >= CAR.LENGTH + CAR.CROSSING_FOLLOW_GAP
     ) {
       this.releaseLeftTurnSlot(car);
     }

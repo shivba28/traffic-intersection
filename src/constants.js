@@ -43,7 +43,10 @@ export const CAR = {
   CROSSING_ENTRY_STAGGER_T: 0.1,
   /** Release left-turn slot this far along the path (slightly before stagger). */
   CROSSING_SLOT_RELEASE_T: 0.06,
-  FOLLOW_GAP: 6,
+  /** Bumper clearance in inbound queues. */
+  FOLLOW_GAP: 3,
+  /** Tighter bumper clearance while crossing / exiting the intersection. */
+  CROSSING_FOLLOW_GAP: 1,
   EXIT_TIMEOUT: 8,
   /** Extra setback before stop line (bumper stays clear of white bar). */
   STOP_BACKUP: 6,
