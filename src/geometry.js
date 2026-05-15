@@ -488,6 +488,11 @@ export function getIntersectionInnerRect() {
   };
 }
 
+/** Stop-line positions for clipping markings before crosswalks. */
+export function getApproachStopBounds() {
+  return { n: STOP_N, s: STOP_S, w: STOP_W, e: STOP_E };
+}
+
 /** Four quadrant zones inside the intersection box (for occupancy). */
 export function getIntersectionZoneRects() {
   const r = getIntersectionInnerRect();

@@ -1,4 +1,4 @@
-import { WORLD, CAR, COLORS, MARKING, SIGNAL } from './constants.js';
+import { WORLD, CAR, COLORS, MARKING, SIGNAL, VIEW } from './constants.js';
 import { getApproachDirectionLabel } from './geometry.js';
 import { DEBUG_INTERSECTION } from './intersectionController.js';
 
@@ -251,6 +251,7 @@ function drawStaticIntersection(ctx, geometry) {
 
 function drawLaneMarkings(ctx, geometry, vx, hy, box, medians) {
   const L = WORLD.SIZE;
+  const stop = geometry.getApproachStopBounds();
   ctx.save();
   ctx.strokeStyle = COLORS.LANE_LINE;
   ctx.lineWidth = MARKING.LANE_LINE_WIDTH;
@@ -265,17 +266,17 @@ function drawLaneMarkings(ctx, geometry, vx, hy, box, medians) {
   if (medians.length > 0) {
     const medX0 = medians[0].x;
     const medX1 = medX0 + medians[0].w;
-    drawDoubleCenterLine(ctx, medX0, 0, medX0, box.y0);
-    drawDoubleCenterLine(ctx, medX1, 0, medX1, box.y0);
-    drawDoubleCenterLine(ctx, medX0, box.y1, medX0, L);
-    drawDoubleCenterLine(ctx, medX1, box.y1, medX1, L);
+    drawDoubleCenterLine(ctx, medX0, 0, medX0, stop.n);
+    drawDoubleCenterLine(ctx, medX1, 0, medX1, stop.n);
+    drawDoubleCenterLine(ctx, medX0, stop.s, medX0, L);
+    drawDoubleCenterLine(ctx, medX1, stop.s, medX1, L);
 
     const medY0 = medians[2].y;
     const medY1 = medY0 + medians[2].h;
-    drawDoubleCenterLine(ctx, 0, medY0, box.x0, medY0);
-    drawDoubleCenterLine(ctx, 0, medY1, box.x0, medY1);
-    drawDoubleCenterLine(ctx, box.x1, medY0, L, medY0);
-    drawDoubleCenterLine(ctx, box.x1, medY1, L, medY1);
+    drawDoubleCenterLine(ctx, 0, medY0, stop.w, medY0);
+    drawDoubleCenterLine(ctx, 0, medY1, stop.w, medY1);
+    drawDoubleCenterLine(ctx, stop.e, medY0, L, medY0);
+    drawDoubleCenterLine(ctx, stop.e, medY1, L, medY1);
   }
 
   ctx.strokeStyle = COLORS.LANE_LINE;
@@ -541,6 +542,10 @@ function drawIntersectionDebug(fg, sim) {
   }
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 export class Renderer {
   /**
    * @param {HTMLCanvasElement} fgCanvas
@@ -553,7 +558,211 @@ export class Renderer {
     this.signalsCanvas = signalsCanvas;
     /** @type {typeof import('./geometry.js') | null} */
     this.geometryModule = null;
+    this.viewportEl = null;
+    this.compassNeedleEl = null;
+    this.view = { panX: 0, panY: 0, zoom: 1, rotation: 0 };
     this._applyDisplaySize();
+  }
+
+  resetView() {
+    this.view.zoom = 1;
+    this.view.rotation = 0;
+    this._centerView();
+    this._applyViewportTransform();
+  }
+
+  _centerView() {
+    const container = this.viewportEl?.parentElement;
+    if (!container) {
+      this.view.panX = 0;
+      this.view.panY = 0;
+      return;
+    }
+    const w = this.displayWidth;
+    const h = this.displayHeight;
+    this.view.panX = container.clientWidth / 2 - w / 2;
+    this.view.panY = container.clientHeight / 2 - h / 2;
+  }
+
+  _screenPivot() {
+    const container = this.viewportEl?.parentElement;
+    if (!container) return { x: 0, y: 0 };
+    return { x: container.clientWidth / 2, y: container.clientHeight / 2 };
+  }
+
+  _canvasCenter() {
+    const w = this.displayWidth;
+    const h = this.displayHeight;
+    return { x: this.view.panX + w / 2, y: this.view.panY + h / 2 };
+  }
+
+  _applyViewportTransform() {
+    if (!this.viewportEl) return;
+    const { panX, panY, zoom, rotation } = this.view;
+    const w = this.displayWidth;
+    const h = this.displayHeight;
+    this.viewportEl.style.left = `${panX}px`;
+    this.viewportEl.style.top = `${panY}px`;
+    this.viewportEl.style.transformOrigin = `${w / 2}px ${h / 2}px`;
+    this.viewportEl.style.transform = `rotate(${rotation}rad) scale(${zoom})`;
+    this._updateCompass();
+  }
+
+  _updateCompass() {
+    if (!this.compassNeedleEl) return;
+    this.compassNeedleEl.style.transform = `rotate(${-this.view.rotation}rad)`;
+  }
+
+  /** Rotate view around screen center (maps-style: north can point any direction on screen). */
+  _setRotation(newRotation) {
+    const pivot = this._screenPivot();
+    const center = this._canvasCenter();
+    const w = this.displayWidth;
+    const h = this.displayHeight;
+    const delta = newRotation - this.view.rotation;
+    const cos = Math.cos(delta);
+    const sin = Math.sin(delta);
+    const dx = center.x - pivot.x;
+    const dy = center.y - pivot.y;
+    const cx2 = pivot.x + dx * cos - dy * sin;
+    const cy2 = pivot.y + dx * sin + dy * cos;
+    this.view.panX = cx2 - w / 2;
+    this.view.panY = cy2 - h / 2;
+    this.view.rotation = newRotation;
+    this._applyViewportTransform();
+  }
+
+  _zoomViewAt(clientX, clientY, factor) {
+    const el = this.viewportEl;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    const ux = (clientX - rect.left) / rect.width;
+    const uy = (clientY - rect.top) / rect.height;
+    this.view.zoom = clamp(this.view.zoom * factor, VIEW.MIN_ZOOM, VIEW.MAX_ZOOM);
+    this._applyViewportTransform();
+    const rect2 = el.getBoundingClientRect();
+    this.view.panX += clientX - rect2.left - ux * rect2.width;
+    this.view.panY += clientY - rect2.top - uy * rect2.height;
+    this._applyViewportTransform();
+  }
+
+  _wheelRotateDelta(e) {
+    if (e.deltaY !== 0) return e.deltaY;
+    if (e.deltaX !== 0) return e.deltaX;
+    return 0;
+  }
+
+  /**
+   * @param {HTMLElement} container
+   */
+  attachViewportControls(container) {
+    const viewport =
+      container.querySelector('#canvas-viewport') ?? container;
+    this.viewportEl = viewport;
+    this.compassNeedleEl = document.getElementById('compass-needle');
+
+    let dragMode = 'none';
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let panOriginX = 0;
+    let panOriginY = 0;
+    let rotStartAngle = 0;
+    let rotStartRotation = 0;
+
+    const endDrag = () => {
+      dragMode = 'none';
+      viewport.classList.remove('is-panning', 'is-rotating');
+    };
+
+    const pivotClient = () => {
+      const p = this._screenPivot();
+      const rect = container.getBoundingClientRect();
+      return { x: rect.left + p.x, y: rect.top + p.y };
+    };
+
+    viewport.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
+    viewport.addEventListener('pointerdown', (e) => {
+      const rotateGesture = e.button === 2 || (e.button === 0 && e.altKey);
+
+      if (rotateGesture) {
+        e.preventDefault();
+        const pivot = pivotClient();
+        dragMode = 'rotate';
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        rotStartAngle = Math.atan2(
+          e.clientY - pivot.y,
+          e.clientX - pivot.x
+        );
+        rotStartRotation = this.view.rotation;
+        viewport.classList.add('is-rotating');
+        viewport.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      if (e.button !== 0) return;
+      dragMode = 'pan';
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      panOriginX = this.view.panX;
+      panOriginY = this.view.panY;
+      viewport.classList.add('is-panning');
+      viewport.setPointerCapture(e.pointerId);
+    });
+
+    viewport.addEventListener('pointermove', (e) => {
+      if (dragMode === 'pan') {
+        this.view.panX = panOriginX + (e.clientX - dragStartX);
+        this.view.panY = panOriginY + (e.clientY - dragStartY);
+        this._applyViewportTransform();
+        return;
+      }
+      if (dragMode === 'rotate') {
+        const pivot = pivotClient();
+        const angle = Math.atan2(e.clientY - pivot.y, e.clientX - pivot.x);
+        this._setRotation(rotStartRotation + (angle - rotStartAngle));
+      }
+    });
+
+    viewport.addEventListener('pointerup', endDrag);
+    viewport.addEventListener('pointercancel', endDrag);
+
+    viewport.addEventListener(
+      'wheel',
+      (e) => {
+        e.preventDefault();
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          const delta = this._wheelRotateDelta(e);
+          if (delta !== 0) {
+            this._setRotation(
+              this.view.rotation - delta * VIEW.ROTATE_WHEEL_SENSITIVITY
+            );
+          }
+          return;
+        }
+        const factor = Math.exp(-e.deltaY * VIEW.ZOOM_WHEEL_SENSITIVITY);
+        this._zoomViewAt(e.clientX, e.clientY, factor);
+      },
+      { passive: false }
+    );
+
+    viewport.addEventListener('dblclick', () => {
+      this.resetView();
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '0' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        this.resetView();
+      }
+    });
+
+    this._centerView();
+    this._applyViewportTransform();
   }
 
   _applyDisplaySize() {

@@ -11,8 +11,12 @@ if (!fg || !bg || !signals) {
   throw new Error('Missing #fg, #bg, or #signals canvas element');
 }
 
+const container = document.getElementById('canvas-container');
 const renderer = new Renderer(fg, bg, signals);
 renderer.init(geometry);
+if (container) {
+  renderer.attachViewportControls(container);
+}
 
 let resizeScheduled = false;
 window.addEventListener('resize', () => {

@@ -139,6 +139,14 @@ export const LOOP = {
   MAX_DELTA: 1 / 30,
 };
 
+/** Canvas viewport navigation (visual only). */
+export const VIEW = {
+  MIN_ZOOM: 0.35,
+  MAX_ZOOM: 4,
+  ZOOM_WHEEL_SENSITIVITY: 0.0012,
+  ROTATE_WHEEL_SENSITIVITY: 0.003,
+};
+
 /** Static scene rendering (no duplicate literals in renderer) */
 export const COLORS = {
   BACKGROUND: '#F4F2EC',
