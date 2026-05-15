@@ -1,4 +1,5 @@
 import { WORLD, CAR, COLORS, MARKING, SIGNAL } from './constants.js';
+import { DEBUG_INTERSECTION } from './intersectionController.js';
 
 /** CSS display size from viewport (square world → equal width and height). */
 function computeDisplaySize() {
@@ -89,7 +90,8 @@ function traceRightTurnArrow(ctx, shaft, head) {
 function drawPavementArrow(ctx, spec) {
   const { x, y, angle, arrow, approach } = spec;
   let draw = arrow;
-  if (approach !== 'E' && (arrow === 'left' || arrow === 'right')) {
+  // Swap L/R glyph so labels match lane types at each approach rotation (pavement only).
+  if (arrow === 'left' || arrow === 'right') {
     draw = arrow === 'left' ? 'right' : 'left';
   }
   ctx.save();
@@ -303,6 +305,39 @@ function drawHUD(_ctx, _stats, _lights) {
   /* Step 8 */
 }
 
+function drawIntersectionDebug(fg, sim) {
+  const ic = sim.intersectionController;
+  if (!ic) return;
+
+  if (DEBUG_INTERSECTION.showIntersectionZones) {
+    const zones = ic.getZoneRects();
+    const keys = ['NW', 'NE', 'SW', 'SE'];
+    for (let i = 0; i < keys.length; i++) {
+      const z = zones[keys[i]];
+      const holder = ic.zones[keys[i]];
+      fg.fillStyle = holder != null ? 'rgba(200, 80, 60, 0.25)' : 'rgba(80, 140, 200, 0.15)';
+      fg.strokeStyle = holder != null ? 'rgba(200, 80, 60, 0.7)' : 'rgba(80, 140, 200, 0.5)';
+      fg.lineWidth = 1;
+      fg.fillRect(z.x0, z.y0, z.x1 - z.x0, z.y1 - z.y0);
+      fg.strokeRect(z.x0, z.y0, z.x1 - z.x0, z.y1 - z.y0);
+    }
+  }
+
+  if (DEBUG_INTERSECTION.showReservedCars) {
+    const cars = sim.allCars;
+    for (let i = 0; i < cars.length; i++) {
+      const car = cars[i];
+      if (!car.reservedZones || car.reservedZones.length === 0) continue;
+      if (car.state !== 'crossing' && car.state !== 'exiting') continue;
+      fg.strokeStyle = 'rgba(255, 220, 80, 0.9)';
+      fg.lineWidth = 2;
+      fg.beginPath();
+      fg.arc(car.x, car.y, CAR.LENGTH * 0.65, 0, Math.PI * 2);
+      fg.stroke();
+    }
+  }
+}
+
 export class Renderer {
   /**
    * @param {HTMLCanvasElement} fgCanvas
@@ -358,6 +393,7 @@ export class Renderer {
     fg.save();
     fg.translate(0.5, 0.5);
     drawCars(fg, sim.allCars);
+    drawIntersectionDebug(fg, sim);
     drawHUD(fg, sim.stats, sim.lights);
     fg.restore();
 

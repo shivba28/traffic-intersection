@@ -1,6 +1,7 @@
 import { createLanes } from './geometry.js';
 import { updateCars } from './carManager.js';
 import { TrafficController } from './trafficController.js';
+import { IntersectionController } from './intersectionController.js';
 import { seededRng } from './utils.js';
 
 const DEFAULT_SEED = 1;
@@ -13,6 +14,7 @@ export class Simulation {
     this.cars = [];
     this.crossingCars = [];
     this.trafficController = new TrafficController();
+    this.intersectionController = new IntersectionController();
     this.spawnTimer = 0;
     this.spawnApproachIndex = 0;
     this.nextCarId = 1;
@@ -43,6 +45,7 @@ export class Simulation {
     this.cars.length = 0;
     this.crossingCars.length = 0;
     this.trafficController = new TrafficController();
+    this.intersectionController = new IntersectionController();
     this.spawnTimer = 0;
     this.spawnApproachIndex = 0;
     this.nextCarId = 1;
