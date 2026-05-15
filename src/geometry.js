@@ -304,6 +304,15 @@ export function getApproachForward(approach) {
   return FWD[approach];
 }
 
+/** Travel-direction label for signal heads (canvas +y down). */
+export function getApproachDirectionLabel(approach) {
+  const f = FWD[approach];
+  if (f.y > 0) return 'Southbound';
+  if (f.y < 0) return 'Northbound';
+  if (f.x < 0) return 'Westbound';
+  return 'Eastbound';
+}
+
 /** Heading in degrees (0 = up, clockwise), per architecture §2. */
 export function getApproachHeading(approach) {
   const f = FWD[approach];
@@ -956,52 +965,69 @@ function addHorizontalInternalBoundariesClipped(lines, y0, y1, xMin, xMax, laneW
 
 export function getLaneBoundaryPolylines() {
   const lines = [];
-  // Inbound: equal lanes across full slab; outbound: wider lanes set back from median.
-  addVerticalInternalBoundariesClipped(lines, VX0, MED_X0, 0, INTERSECTION_N, LW_IN_EQUAL, VX0, 1);
+  // Inbound / outbound dashed lines end at stop line (not through crosswalk).
+  addVerticalInternalBoundariesClipped(lines, VX0, MED_X0, 0, STOP_N, LW_IN_EQUAL, VX0, 1);
   addVerticalInternalBoundariesClipped(
     lines,
     MED_X0 - BLOCK_OUT,
     MED_X0 - OUT_CLEAR,
-    INTERSECTION_S,
+    STOP_S,
     W,
     LW_OUT,
     MED_X0 - OUT_CLEAR,
     -1
   );
-  addVerticalInternalBoundariesClipped(lines, INB_X0, INB_X1, INTERSECTION_S, W, LW_IN_EQUAL, INB_X0, 1);
+  addVerticalInternalBoundariesClipped(lines, INB_X0, INB_X1, STOP_S, W, LW_IN_EQUAL, INB_X0, 1);
   addVerticalInternalBoundariesClipped(
     lines,
     MED_X1 + OUT_CLEAR,
     MED_X1 + BLOCK_OUT,
     0,
-    INTERSECTION_N,
+    STOP_N,
     LW_OUT,
     MED_X1 + OUT_CLEAR,
     1
   );
-  addHorizontalInternalBoundariesClipped(lines, HY0, MED_Y0, INTERSECTION_E, W, LW_IN_EQUAL, HY0, 1);
+  addHorizontalInternalBoundariesClipped(lines, HY0, MED_Y0, STOP_E, W, LW_IN_EQUAL, HY0, 1);
   addHorizontalInternalBoundariesClipped(
     lines,
     MED_Y0 - BLOCK_OUT,
     MED_Y0 - OUT_CLEAR,
     0,
-    INTERSECTION_W,
+    STOP_W,
     LW_OUT,
     MED_Y0 - OUT_CLEAR,
     -1
   );
-  addHorizontalInternalBoundariesClipped(lines, MED_Y1, INB_Y1, 0, INTERSECTION_W, LW_IN_EQUAL, MED_Y1, 1);
+  addHorizontalInternalBoundariesClipped(lines, MED_Y1, INB_Y1, 0, STOP_W, LW_IN_EQUAL, MED_Y1, 1);
   addHorizontalInternalBoundariesClipped(
     lines,
     MED_Y1 + OUT_CLEAR,
     MED_Y1 + BLOCK_OUT,
-    INTERSECTION_E,
+    STOP_E,
     W,
     LW_OUT,
     MED_Y1 + OUT_CLEAR,
     1
   );
   return lines;
+}
+
+/** World-space offset so a left/right turn glyph centroid sits on the lane center. */
+function turnArrowGlyphOffset(arrow, angle) {
+  const len = MARKING.ARROW_SHAFT;
+  const s = len / 25;
+  const bend = 2 * s;
+  const headY = 13 * s;
+  const headW = 5 * s;
+  const lx = (-len / 2 + bend + headW) / 2;
+  const ly = arrow === 'left' ? -headY / 2 : headY / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    dx: lx * cos - ly * sin,
+    dy: lx * sin + ly * cos,
+  };
 }
 
 /**
@@ -1037,6 +1063,14 @@ export function getInboundLaneArrowSpecs() {
         x = STOP_E + d;
         y = lane.centerY;
         angle = Math.atan2(FWD.E.y, FWD.E.x);
+      }
+      if (arrow === 'left' || arrow === 'right') {
+        const off = turnArrowGlyphOffset(arrow, angle);
+        if (ap === 'N' || ap === 'S') {
+          x -= off.dx;
+        } else {
+          y -= off.dy;
+        }
       }
       specs.push({ x, y, angle, arrow, approach: ap });
     }

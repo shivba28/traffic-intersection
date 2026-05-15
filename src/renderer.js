@@ -1,4 +1,5 @@
 import { WORLD, CAR, COLORS, MARKING, SIGNAL } from './constants.js';
+import { getApproachDirectionLabel } from './geometry.js';
 import { DEBUG_INTERSECTION } from './intersectionController.js';
 
 /** Full viewport width; square display (world is 1:1). */
@@ -374,8 +375,19 @@ function drawArrowLamp(ctx, x, y, r, state) {
   ctx.restore();
 }
 
+function drawApproachLabel(ctx, approach, housingHeight) {
+  const label = getApproachDirectionLabel(approach);
+  ctx.save();
+  ctx.font = SIGNAL.LABEL_FONT;
+  ctx.fillStyle = COLORS.SIGNAL_LABEL;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(label, 0, housingHeight / 2 + SIGNAL.LABEL_GAP);
+  ctx.restore();
+}
+
 function drawSignalHead(ctx, layout, approachLights) {
-  const { x, y, rotationRad } = layout;
+  const { x, y, rotationRad, approach } = layout;
   const rad =
     rotationRad ??
     ((layout.facingHeading - 90) * Math.PI) / 180;
@@ -424,10 +436,12 @@ function drawSignalHead(ctx, layout, approachLights) {
     lampX.push(-w / 2 + pad + lampR + i * slot);
   }
 
-  drawLamp(ctx, lampX[0], 0, lampR, COLORS.SIGNAL_RED, main === 'red');
-  drawLamp(ctx, lampX[1], 0, lampR, COLORS.SIGNAL_YELLOW, main === 'yellow');
-  drawLamp(ctx, lampX[2], 0, lampR, COLORS.SIGNAL_GREEN, main === 'green');
-  drawArrowLamp(ctx, lampX[3], 0, lampR, leftState);
+  drawArrowLamp(ctx, lampX[0], 0, lampR, leftState);
+  drawLamp(ctx, lampX[1], 0, lampR, COLORS.SIGNAL_RED, main === 'red');
+  drawLamp(ctx, lampX[2], 0, lampR, COLORS.SIGNAL_YELLOW, main === 'yellow');
+  drawLamp(ctx, lampX[3], 0, lampR, COLORS.SIGNAL_GREEN, main === 'green');
+
+  drawApproachLabel(ctx, approach, h);
 
   ctx.restore();
 }

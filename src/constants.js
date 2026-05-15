@@ -119,6 +119,8 @@ function buildSignalConstants() {
     POST_W: 3,
     POST_H: 8,
     ARROW_SCALE: 1,
+    LABEL_FONT: '600 10px ui-sans-serif, system-ui, sans-serif',
+    LABEL_GAP: 6,
   };
 }
 
@@ -152,6 +154,7 @@ export const COLORS = {
   SIGNAL_HOUSING_STROKE: 'rgba(255,255,255,0.07)',
   SIGNAL_LEFT_ARROW_ON: '#0E1116',
   SIGNAL_LEFT_ARROW_OFF: '#3B3E45',
+  SIGNAL_LABEL: '#54565B',
   /** Muted palette (design reference) */
   CAR: [
     '#7E8590',
