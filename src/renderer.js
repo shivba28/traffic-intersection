@@ -1,6 +1,7 @@
 import { WORLD, CAR, COLORS, MARKING, SIGNAL, VIEW } from './constants.js';
 import { getApproachDirectionLabel } from './geometry.js';
 import { DEBUG_INTERSECTION } from './intersectionController.js';
+import { showCrosswalks, getSceneColors } from './tweaks.js';
 
 /** Full viewport width; square display (world is 1:1). */
 function computeDisplaySize() {
@@ -56,24 +57,28 @@ function strokeDashedLine(ctx, x1, y1, x2, y2) {
   ctx.setLineDash([]);
 }
 
-function drawDoubleCenterLine(ctx, x1, y1, x2, y2) {
-  const half = MARKING.CENTER_LINE_GAP / 2;
-  const dx = x2 - x1;
-  const dy = y2 - y1;
-  const len = Math.hypot(dx, dy);
-  if (len < 1e-6) return;
-  const nx = (-dy / len) * half;
-  const ny = (dx / len) * half;
-  ctx.strokeStyle = COLORS.CENTER_LINE;
+/** Yellow–green–yellow along a median strip (center line = tree strip). */
+function drawMedianTripleLine(ctx, edge0, edge1, start, end, vertical) {
+  const mid = (edge0 + edge1) / 2;
   ctx.lineWidth = MARKING.CENTER_LINE_WIDTH;
-  ctx.beginPath();
-  ctx.moveTo(x1 + nx, y1 + ny);
-  ctx.lineTo(x2 + nx, y2 + ny);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x1 - nx, y1 - ny);
-  ctx.lineTo(x2 - nx, y2 - ny);
-  ctx.stroke();
+  ctx.lineCap = 'butt';
+
+  const stroke = (coord, color) => {
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    if (vertical) {
+      ctx.moveTo(coord, start);
+      ctx.lineTo(coord, end);
+    } else {
+      ctx.moveTo(start, coord);
+      ctx.lineTo(end, coord);
+    }
+    ctx.stroke();
+  };
+
+  stroke(edge0, COLORS.CENTER_LINE);
+  stroke(mid, COLORS.MEDIAN_TREE);
+  stroke(edge1, COLORS.CENTER_LINE);
 }
 
 /**
@@ -204,21 +209,22 @@ function drawStaticIntersection(ctx, geometry) {
   const hy = geometry.getHorizontalRoadYBounds();
   const box = geometry.getIntersectionInnerRect();
   const medians = geometry.getMedianStripRects();
+  const scene = getSceneColors();
 
   ctx.save();
-  ctx.fillStyle = COLORS.BACKGROUND;
+  ctx.fillStyle = scene.background;
   ctx.fillRect(0, 0, L, L);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.25)';
   ctx.shadowBlur = 28;
   ctx.shadowOffsetY = 4;
-  ctx.fillStyle = COLORS.ASPHALT;
+  ctx.fillStyle = scene.asphalt;
   ctx.fillRect(vx.x0, 0, vx.x1 - vx.x0, L);
   ctx.fillRect(0, hy.y0, L, hy.y1 - hy.y0);
   ctx.restore();
 
-  ctx.fillStyle = COLORS.ASPHALT;
+  ctx.fillStyle = scene.asphalt;
   ctx.fillRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
 
   const grd = ctx.createRadialGradient(
@@ -236,7 +242,7 @@ function drawStaticIntersection(ctx, geometry) {
 
   drawLaneMarkings(ctx, geometry, vx, hy, box, medians);
 
-  drawCrosswalks(ctx, geometry);
+  if (showCrosswalks()) drawCrosswalks(ctx, geometry);
 
   const stops = geometry.getStopLineSegments();
   drawFilledStopLines(ctx, stops);
@@ -266,17 +272,13 @@ function drawLaneMarkings(ctx, geometry, vx, hy, box, medians) {
   if (medians.length > 0) {
     const medX0 = medians[0].x;
     const medX1 = medX0 + medians[0].w;
-    drawDoubleCenterLine(ctx, medX0, 0, medX0, stop.n);
-    drawDoubleCenterLine(ctx, medX1, 0, medX1, stop.n);
-    drawDoubleCenterLine(ctx, medX0, stop.s, medX0, L);
-    drawDoubleCenterLine(ctx, medX1, stop.s, medX1, L);
+    drawMedianTripleLine(ctx, medX0, medX1, 0, stop.n, true);
+    drawMedianTripleLine(ctx, medX0, medX1, stop.s, L, true);
 
     const medY0 = medians[2].y;
     const medY1 = medY0 + medians[2].h;
-    drawDoubleCenterLine(ctx, 0, medY0, stop.w, medY0);
-    drawDoubleCenterLine(ctx, 0, medY1, stop.w, medY1);
-    drawDoubleCenterLine(ctx, stop.e, medY0, L, medY0);
-    drawDoubleCenterLine(ctx, stop.e, medY1, L, medY1);
+    drawMedianTripleLine(ctx, medY0, medY1, 0, stop.w, false);
+    drawMedianTripleLine(ctx, medY0, medY1, stop.e, L, false);
   }
 
   ctx.strokeStyle = COLORS.LANE_LINE;
@@ -393,7 +395,10 @@ function drawSignalHead(ctx, layout, approachLights) {
     rotationRad ??
     ((layout.facingHeading - 90) * Math.PI) / 180;
   const main = approachLights.main;
-  const leftState = approachLights.leftArrow === 'green' ? 'green' : 'red';
+  const leftState =
+    approachLights.leftArrow === 'green' || approachLights.leftArrow === 'yellow'
+      ? approachLights.leftArrow
+      : 'red';
 
   const lampR = SIGNAL.LIGHT_RADIUS;
   const pad = SIGNAL.HEAD_PADDING;
@@ -455,13 +460,20 @@ function drawLights(ctx, lights, geometryModule) {
   }
 }
 
-function carShowsBrakeLights(car) {
-  if (car.state === 'crossing' || car.state === 'exiting') return false;
-  const v = car.speed ?? 0;
-  return v < CAR.MAX_SPEED * 0.5 && (car.state === 'stopped' || v < CAR.MAX_SPEED * 0.35);
+function turnSignalLit(nowSec) {
+  const half = CAR.TURN_SIGNAL_FLASH_PERIOD;
+  return Math.floor(nowSec / half) % 2 === 0;
 }
 
-function drawCar(ctx, car) {
+function drawTurnSignalLamp(ctx, x, y, lit) {
+  if (!lit) return;
+  ctx.fillStyle = 'rgba(242, 180, 58, 0.4)';
+  ctx.fillRect(x - 0.4, y - 0.35, 2.2, 1.9);
+  ctx.fillStyle = COLORS.SIGNAL_YELLOW;
+  ctx.fillRect(x, y, 1.4, 1.2);
+}
+
+function drawCar(ctx, car, nowSec) {
   const len = CAR.LENGTH;
   const w = CAR.WIDTH;
   const r = 2.5;
@@ -490,18 +502,26 @@ function drawCar(ctx, car) {
   ctx.lineTo(len / 2 - 4, w / 2 - 1.5);
   ctx.stroke();
 
-  if (carShowsBrakeLights(car)) {
+  if (car.braking) {
     ctx.fillStyle = '#E2503C';
     ctx.fillRect(-len / 2 + 0.5, -w / 2 + 1.5, 1.2, 1.5);
     ctx.fillRect(-len / 2 + 0.5, w / 2 - 3, 1.2, 1.5);
   }
 
+  const blink = turnSignalLit(nowSec);
+  if (car.laneType === 'left') {
+    drawTurnSignalLamp(ctx, len / 2 - 3.5, -w / 2 + 1.2, blink);
+  }
+  if (car.laneType === 'right') {
+    drawTurnSignalLamp(ctx, len / 2 - 3.5, w / 2 - 2.4, blink);
+  }
+
   ctx.restore();
 }
 
-function drawCars(ctx, cars) {
+function drawCars(ctx, cars, nowSec) {
   for (let i = 0; i < cars.length; i++) {
-    drawCar(ctx, cars[i]);
+    drawCar(ctx, cars[i], nowSec);
   }
 }
 
@@ -565,10 +585,25 @@ export class Renderer {
   }
 
   resetView() {
-    this.view.zoom = 1;
+    this.view.zoom = this._clampZoom(1);
     this.view.rotation = 0;
     this._centerView();
     this._applyViewportTransform();
+  }
+
+  /** Minimum zoom so scaled canvas width is not less than the container width. */
+  _getMinZoom() {
+    const container = this.viewportEl?.parentElement;
+    if (!container || this.displayWidth < 1) return 1;
+    return container.clientWidth / this.displayWidth;
+  }
+
+  _clampZoom(zoom) {
+    return clamp(zoom, this._getMinZoom(), VIEW.MAX_ZOOM);
+  }
+
+  _isAtMinZoom() {
+    return this.view.zoom <= this._getMinZoom() + 1e-6;
   }
 
   _centerView() {
@@ -582,6 +617,91 @@ export class Renderer {
     const h = this.displayHeight;
     this.view.panX = container.clientWidth / 2 - w / 2;
     this.view.panY = container.clientHeight / 2 - h / 2;
+  }
+
+  /**
+   * Axis-aligned bounds of the scaled + rotated canvas in container coordinates.
+   * @param {number} panX
+   * @param {number} panY
+   * @param {number} zoom
+   * @param {number} rotation
+   */
+  _getScaledBounds(panX, panY, zoom, rotation) {
+    const w = this.displayWidth;
+    const h = this.displayHeight;
+    const cx = panX + w / 2;
+    const cy = panY + h / 2;
+    const hw = (w * zoom) / 2;
+    const hh = (h * zoom) / 2;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const corners = [
+      [-hw, -hh],
+      [hw, -hh],
+      [hw, hh],
+      [-hw, hh],
+    ];
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i < corners.length; i++) {
+      const lx = corners[i][0];
+      const ly = corners[i][1];
+      const x = cx + lx * cos - ly * sin;
+      const y = cy + lx * sin + ly * cos;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
+  }
+
+  /** Keep viewport inside canvas edges (center when canvas smaller than container). */
+  _clampPan() {
+    const container = this.viewportEl?.parentElement;
+    if (!container) return;
+
+    if (this._isAtMinZoom()) {
+      this._centerView();
+      return;
+    }
+
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+    const { zoom, rotation } = this.view;
+    let { panX, panY } = this.view;
+    const b = this._getScaledBounds(panX, panY, zoom, rotation);
+
+    let dx = 0;
+    let dy = 0;
+
+    if (b.width <= cw) {
+      dx = cw / 2 - (b.minX + b.maxX) / 2;
+    } else if (b.minX > 0) {
+      dx = -b.minX;
+    } else if (b.maxX < cw) {
+      dx = cw - b.maxX;
+    }
+
+    if (b.height <= ch) {
+      dy = ch / 2 - (b.minY + b.maxY) / 2;
+    } else if (b.minY > 0) {
+      dy = -b.minY;
+    } else if (b.maxY < ch) {
+      dy = ch - b.maxY;
+    }
+
+    this.view.panX = panX + dx;
+    this.view.panY = panY + dy;
   }
 
   _screenPivot() {
@@ -605,6 +725,7 @@ export class Renderer {
     this.viewportEl.style.top = `${panY}px`;
     this.viewportEl.style.transformOrigin = `${w / 2}px ${h / 2}px`;
     this.viewportEl.style.transform = `rotate(${rotation}rad) scale(${zoom})`;
+    this.viewportEl.classList.toggle('is-zoom-min', this._isAtMinZoom());
     this._updateCompass();
   }
 
@@ -629,6 +750,7 @@ export class Renderer {
     this.view.panX = cx2 - w / 2;
     this.view.panY = cy2 - h / 2;
     this.view.rotation = newRotation;
+    this._clampPan();
     this._applyViewportTransform();
   }
 
@@ -639,11 +761,12 @@ export class Renderer {
     if (rect.width < 1 || rect.height < 1) return;
     const ux = (clientX - rect.left) / rect.width;
     const uy = (clientY - rect.top) / rect.height;
-    this.view.zoom = clamp(this.view.zoom * factor, VIEW.MIN_ZOOM, VIEW.MAX_ZOOM);
+    this.view.zoom = this._clampZoom(this.view.zoom * factor);
     this._applyViewportTransform();
     const rect2 = el.getBoundingClientRect();
     this.view.panX += clientX - rect2.left - ux * rect2.width;
     this.view.panY += clientY - rect2.top - uy * rect2.height;
+    this._clampPan();
     this._applyViewportTransform();
   }
 
@@ -681,12 +804,8 @@ export class Renderer {
       return { x: rect.left + p.x, y: rect.top + p.y };
     };
 
-    viewport.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-    });
-
     viewport.addEventListener('pointerdown', (e) => {
-      const rotateGesture = e.button === 2 || (e.button === 0 && e.altKey);
+      const rotateGesture = e.button === 0 && e.altKey;
 
       if (rotateGesture) {
         e.preventDefault();
@@ -705,6 +824,7 @@ export class Renderer {
       }
 
       if (e.button !== 0) return;
+      if (this._isAtMinZoom()) return;
       dragMode = 'pan';
       dragStartX = e.clientX;
       dragStartY = e.clientY;
@@ -716,8 +836,10 @@ export class Renderer {
 
     viewport.addEventListener('pointermove', (e) => {
       if (dragMode === 'pan') {
+        if (this._isAtMinZoom()) return;
         this.view.panX = panOriginX + (e.clientX - dragStartX);
         this.view.panY = panOriginY + (e.clientY - dragStartY);
+        this._clampPan();
         this._applyViewportTransform();
         return;
       }
@@ -777,7 +899,14 @@ export class Renderer {
   /** Re-fit canvases to viewport and redraw static layer (call on window resize). */
   resize() {
     this._applyDisplaySize();
-    if (this.geometryModule) {
+    this.view.zoom = this._clampZoom(this.view.zoom);
+    this._clampPan();
+    this.redrawStatic();
+  }
+
+  /** Redraw road markings (e.g. after crosswalk toggle). */
+  redrawStatic() {
+    if (this.geometryModule && this.bgCtx) {
       redrawStaticBackground(this.bgCtx, this.geometryModule);
     }
   }
@@ -799,7 +928,7 @@ export class Renderer {
     fg.clearRect(0, 0, L, L);
     fg.save();
     fg.translate(0.5, 0.5);
-    drawCars(fg, sim.allCars);
+    drawCars(fg, sim.allCars, performance.now() / 1000);
     drawIntersectionDebug(fg, sim);
     drawHUD(fg, sim.stats, sim.lights);
     fg.restore();

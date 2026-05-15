@@ -3,14 +3,22 @@
  * Step 5.5: declarative phases, runtime invariants, delta sub-stepping, canMove API.
  */
 
-import { PHASE, MAIN_SIGNAL, LEFT_ARROW, SIGNAL_AXIS } from './constants.js';
+import {
+  PHASE,
+  MAIN_SIGNAL,
+  LEFT_ARROW,
+  SIGNAL_AXIS,
+  DEBUG_ADAPTIVE_TIMING,
+  DEBUG_PHASE_TRANSITIONS,
+} from './constants.js';
+import { readSensors } from './sensorSystem.js';
 
 const APPROACHES = ['N', 'S', 'E', 'W'];
 
 /** Max simulation time applied per internal tick (100ms) — avoids phase skips on lag/tab hide. */
 const MAX_UPDATE_STEP_SEC = 0.1;
 
-/** Tolerance for phaseTimer >= duration after repeated float accumulation. */
+/** Tolerance for phaseElapsedTime >= threshold after repeated float accumulation. */
 const PHASE_TIMER_EPSILON = 1e-6;
 
 const MAIN_SIGNAL_VALUES = new Set(Object.values(MAIN_SIGNAL));
@@ -71,6 +79,14 @@ export const PHASES = [
     ew: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.OFF },
   },
   {
+    id: 'NS_LEFT_YELLOW',
+    min: PHASE.YELLOW_DURATION,
+    max: PHASE.YELLOW_DURATION,
+    fixed: true,
+    ns: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.YELLOW },
+    ew: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.OFF },
+  },
+  {
     id: 'ALL_RED_NS_TO_EW',
     min: PHASE.ALL_RED_DURATION,
     max: PHASE.ALL_RED_DURATION,
@@ -107,6 +123,14 @@ export const PHASES = [
     fixed: false,
     ns: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.OFF },
     ew: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.GREEN },
+  },
+  {
+    id: 'EW_LEFT_YELLOW',
+    min: PHASE.YELLOW_DURATION,
+    max: PHASE.YELLOW_DURATION,
+    fixed: true,
+    ns: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.OFF },
+    ew: { main: MAIN_SIGNAL.RED, leftArrow: LEFT_ARROW.YELLOW },
   },
   {
     id: 'ALL_RED_EW_TO_NS',
@@ -170,6 +194,28 @@ function validatePhaseDefinitions(phases) {
 
 validatePhaseDefinitions(PHASES);
 
+/**
+ * Active axis + movement for adaptive green phases (null for yellow / all-red).
+ * @param {PhaseDef} phase
+ * @returns {{ axis: 'NS' | 'EW', movementType: 'straight' | 'left' } | null}
+ */
+function adaptiveDemandKey(phase) {
+  if (phase.fixed) return null;
+  if (phase.ns.main === MAIN_SIGNAL.GREEN && phase.ew.main !== MAIN_SIGNAL.GREEN) {
+    return { axis: 'NS', movementType: 'straight' };
+  }
+  if (phase.ew.main === MAIN_SIGNAL.GREEN && phase.ns.main !== MAIN_SIGNAL.GREEN) {
+    return { axis: 'EW', movementType: 'straight' };
+  }
+  if (phase.ns.leftArrow === LEFT_ARROW.GREEN) {
+    return { axis: 'NS', movementType: 'left' };
+  }
+  if (phase.ew.leftArrow === LEFT_ARROW.GREEN) {
+    return { axis: 'EW', movementType: 'left' };
+  }
+  return null;
+}
+
 /** Expand axis-level declarative signals to per-approach light map. */
 function lightsFromPhase(phase) {
   const lights = {};
@@ -208,7 +254,9 @@ function normalizeDirection(direction) {
 export class TrafficController {
   constructor() {
     this.phaseIndex = 0;
-    this.phaseTimer = 0;
+    this.phaseElapsedTime = 0;
+    this.currentPhaseMin = PHASES[0].min;
+    this.currentPhaseMax = PHASES[0].max;
     /** @type {Record<string, { main: string, leftArrow: string }>} */
     this.lights = this._computeLights();
     this._assertRuntimeInvariants();
@@ -230,7 +278,7 @@ export class TrafficController {
 
   /** Seconds left in the current phase (for HUD / debug UI). */
   get phaseTimeRemaining() {
-    return Math.max(0, this._phaseDuration(this.phase) - this.phaseTimer);
+    return Math.max(0, this.currentPhaseMax - this.phaseElapsedTime);
   }
 
   /**
@@ -248,24 +296,76 @@ export class TrafficController {
     return lightsFromPhase(PHASES[this.phaseIndex]);
   }
 
-  _phaseDuration(phase) {
-    return phase.min;
+  _initPhaseTiming() {
+    const phase = this.phase;
+    this.currentPhaseMin = phase.min;
+    this.currentPhaseMax = phase.max;
   }
 
-  _advancePhase() {
+  /** @param {number} [carryOver] elapsed time to apply to the next phase */
+  _advancePhase(carryOver = 0) {
     this.phaseIndex = (this.phaseIndex + 1) % PHASES.length;
-    this.phaseTimer = 0;
+    this.phaseElapsedTime = carryOver;
+    this._initPhaseTiming();
     this.lights = this._computeLights();
     this._assertRuntimeInvariants();
+    if (DEBUG_PHASE_TRANSITIONS) {
+      console.log('Phase:', this.phase.id);
+    }
+  }
+
+  /**
+   * @param {import('./sensorSystem.js').SensorDemand} demand
+   * @returns {number}
+   */
+  _activeDemand(demand) {
+    const key = adaptiveDemandKey(this.phase);
+    if (!key) return 0;
+    return demand[key.axis][key.movementType];
+  }
+
+  /**
+   * Elapsed time credited to the phase being left (for overflow carry).
+   * @param {import('./sensorSystem.js').SensorDemand} demand
+   */
+  _advanceThreshold(demand) {
+    const phase = this.phase;
+    if (phase.fixed) return phase.min;
+
+    const activeDemand = this._activeDemand(demand);
+    if (this.phaseElapsedTime >= this.currentPhaseMax - PHASE_TIMER_EPSILON) {
+      return this.currentPhaseMax;
+    }
+    if (activeDemand === 0 && this.phaseElapsedTime >= this.currentPhaseMin - PHASE_TIMER_EPSILON) {
+      return this.currentPhaseMin;
+    }
+    return this.currentPhaseMax;
+  }
+
+  /**
+   * @param {import('./sensorSystem.js').SensorDemand} demand
+   */
+  _shouldAdvancePhase(demand) {
+    const phase = this.phase;
+    if (phase.fixed) {
+      return this.phaseElapsedTime >= phase.min - PHASE_TIMER_EPSILON;
+    }
+
+    const activeDemand = this._activeDemand(demand);
+    if (this.phaseElapsedTime < this.currentPhaseMin - PHASE_TIMER_EPSILON) return false;
+    if (this.phaseElapsedTime >= this.currentPhaseMax - PHASE_TIMER_EPSILON) return true;
+    if (activeDemand === 0) return true;
+    return false;
   }
 
   /**
    * Movement permission API for Step 6 (cars will call this later).
    * @param {string} direction — "NS" | "EW" or per-approach "N" | "S" | "E" | "W"
    * @param {'straight' | 'left'} movementType
+   * @param {{ state?: string, movementType?: string } | null} [car] optional — allows in-intersection cars during LEFT_YELLOW
    * @returns {boolean}
    */
-  canMove(direction, movementType) {
+  canMove(direction, movementType, car = null) {
     const key = normalizeDirection(direction);
 
     if (movementType === 'straight') {
@@ -275,13 +375,20 @@ export class TrafficController {
     }
 
     if (movementType === 'left') {
-      if (key === 'NS') {
-        return SIGNAL_AXIS.NS.every((a) => this.lights[a].leftArrow === LEFT_ARROW.GREEN);
+      if (
+        car
+        && car.movementType === 'left'
+        && (car.state === 'crossing' || car.state === 'exiting')
+      ) {
+        return true;
       }
-      if (key === 'EW') {
-        return SIGNAL_AXIS.EW.every((a) => this.lights[a].leftArrow === LEFT_ARROW.GREEN);
-      }
-      return this.lights[key].leftArrow === LEFT_ARROW.GREEN;
+
+      const greenArrow = (approach) => this.lights[approach].leftArrow === LEFT_ARROW.GREEN;
+      if (key === 'NS') return SIGNAL_AXIS.NS.every(greenArrow);
+      if (key === 'EW') return SIGNAL_AXIS.EW.every(greenArrow);
+      const arrow = this.lights[key].leftArrow;
+      if (arrow === LEFT_ARROW.YELLOW || arrow === LEFT_ARROW.OFF) return false;
+      return arrow === LEFT_ARROW.GREEN;
     }
 
     throw new Error(`TrafficController.canMove: unknown movementType "${movementType}"`);
@@ -293,7 +400,10 @@ export class TrafficController {
       this.phaseIndex >= 0 && this.phaseIndex < PHASES.length,
       `phaseIndex ${this.phaseIndex} out of range [0, ${PHASES.length})`
     );
-    assert(this.phaseTimer >= 0, `phaseTimer must be >= 0, got ${this.phaseTimer}`);
+    assert(
+      this.phaseElapsedTime >= 0,
+      `phaseElapsedTime must be >= 0, got ${this.phaseElapsedTime}`
+    );
 
     const { ns, ew } = this.axisMainStates;
     assert(
@@ -328,31 +438,43 @@ export class TrafficController {
   }
 
   /**
-   * Add elapsed time, then drain full phase durations (carries overflow across phases).
+   * Add elapsed time, then advance when min/max/demand rules allow (carries overflow).
+   * @param {import('./simulation.js').Simulation} sim
    * @param {number} delta seconds
    */
-  _tickPhaseTimer(delta) {
-    this.phaseTimer += delta;
-    let duration = this._phaseDuration(PHASES[this.phaseIndex]);
-    while (this.phaseTimer >= duration - PHASE_TIMER_EPSILON) {
-      this.phaseTimer -= duration;
-      this._advancePhase();
-      duration = this._phaseDuration(PHASES[this.phaseIndex]);
+  _tickPhaseTimer(sim, delta) {
+    this.phaseElapsedTime += delta;
+    let demand = readSensors(sim);
+
+    while (this._shouldAdvancePhase(demand)) {
+      const threshold = this._advanceThreshold(demand);
+      const excess = Math.max(0, this.phaseElapsedTime - threshold);
+      this._advancePhase(excess);
+      demand = readSensors(sim);
+    }
+
+    if (DEBUG_ADAPTIVE_TIMING && adaptiveDemandKey(this.phase)) {
+      console.log({
+        phase: this.phase.id,
+        elapsed: this.phaseElapsedTime,
+        demand: this._activeDemand(demand),
+      });
     }
   }
 
   /**
    * Advance the signal cycle. Called once per simulation tick (no internal setInterval).
    * Large deltas are clamped per sub-step so phases are not skipped.
+   * @param {import('./simulation.js').Simulation} sim
    * @param {number} delta seconds since last frame
    */
-  update(delta) {
+  update(sim, delta) {
     assert(delta >= 0, `delta must be >= 0, got ${delta}`);
 
     let remaining = delta;
     while (remaining > 0) {
       const step = Math.min(remaining, MAX_UPDATE_STEP_SEC);
-      this._tickPhaseTimer(step);
+      this._tickPhaseTimer(sim, step);
       remaining -= step;
     }
 

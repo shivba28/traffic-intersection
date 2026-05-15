@@ -35,8 +35,8 @@ export class Simulation {
 
   /** @param {number} delta */
   update(delta) {
-    this.trafficController.update(delta);
     updateCars(this, delta);
+    this.trafficController.update(this, delta);
   }
 
   reset() {

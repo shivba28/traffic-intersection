@@ -3,7 +3,8 @@
  * Intersection rules delegated to intersectionController.
  */
 
-import { CAR, SPAWN, COLORS } from './constants.js';
+import { CAR, SPAWN, COLORS, DEBUG_LANE_QUEUES } from './constants.js';
+import { getSpawnInterval } from './tweaks.js';
 import {
   APPROACH_ORDER,
   DESPAWN_BOUNDS,
@@ -312,9 +313,40 @@ function tryBeginCrossing(sim, car) {
   return true;
 }
 
+/** Inbound approach only — mirrors cars waiting before the intersection. */
+function isQueuedOnLane(car) {
+  return car.state === 'moving' || car.state === 'stopped';
+}
+
+/**
+ * Rebuild every lane's queue from sim.cars (closest to stop line first).
+ * Read-only mirror for sensors; does not affect movement.
+ * @param {import('./simulation.js').Simulation} sim
+ */
+export function rebuildLaneQueues(sim) {
+  for (let i = 0; i < sim.lanes.length; i++) {
+    const lane = sim.lanes[i];
+    const queued = [];
+    for (let j = 0; j < sim.cars.length; j++) {
+      const car = sim.cars[j];
+      if (car.laneId !== lane.id) continue;
+      if (!isQueuedOnLane(car)) continue;
+      queued.push(car);
+    }
+    queued.sort((a, b) => distCenterToStop(a, lane) - distCenterToStop(b, lane));
+    lane.queue.length = 0;
+    for (let k = 0; k < queued.length; k++) {
+      lane.queue.push(queued[k].id);
+    }
+    if (DEBUG_LANE_QUEUES) {
+      console.log(`${lane.id} queue=${lane.queue.length}`);
+    }
+  }
+}
+
 function spawnCar(sim, lane) {
   const pt = getInboundSpawnPoint(lane);
-  sim.cars.push({
+  const car = {
     id: sim.nextCarId++,
     laneId: lane.id,
     approach: lane.approach,
@@ -324,10 +356,13 @@ function spawnCar(sim, lane) {
     y: pt.y,
     heading: pt.heading,
     speed: CAR.MAX_SPEED,
+    braking: false,
     color: pickCarColor(sim.rng),
     state: 'moving',
     reservedZones: [],
-  });
+  };
+  sim.cars.push(car);
+  lane.queue.push(car.id);
 }
 
 function trySpawn(sim) {
@@ -470,23 +505,20 @@ function updateCar(sim, car, delta) {
   const lane = findLane(sim.lanes, car.laneId);
   if (!lane) return;
 
+  const prevSpeed = car.speed ?? 0;
   const ic = sim.intersectionController;
 
   if (car.state === 'crossing') {
     advanceCrossingPlatoon(sim, car, delta, ic);
     ic.updateOccupancy(sim, car);
-    return;
-  }
-
-  if (car.state === 'exiting') {
+  } else if (car.state === 'exiting') {
     advanceExitingPlatoon(car, sim.cars, delta);
     ic.updateOccupancy(sim, car);
-    return;
-  }
-
-  if (car.state === 'moving' || car.state === 'stopped') {
+  } else if (car.state === 'moving' || car.state === 'stopped') {
     updateInbound(sim, car, lane, delta);
   }
+
+  car.braking = (car.speed ?? 0) < prevSpeed - CAR.BRAKE_LIGHT_DECEL_EPS;
 }
 
 function isOutOfBounds(car) {
@@ -516,7 +548,7 @@ function despawnCar(sim, index) {
  */
 export function updateCars(sim, delta) {
   sim.spawnTimer += delta;
-  if (sim.spawnTimer >= SPAWN.INTERVAL) {
+  if (sim.spawnTimer >= getSpawnInterval()) {
     sim.spawnTimer = 0;
     trySpawn(sim);
   }
@@ -542,6 +574,8 @@ export function updateCars(sim, delta) {
     const idx = sim.cars.indexOf(toDespawn[i]);
     if (idx !== -1) despawnCar(sim, idx);
   }
+
+  rebuildLaneQueues(sim);
 }
 
 /** Leaders update before followers for stable platoon spacing. */

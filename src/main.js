@@ -2,8 +2,19 @@ import { LOOP } from './constants.js';
 import * as geometry from './geometry.js';
 import { Simulation } from './simulation.js';
 import { Renderer } from './renderer.js';
+import { initUI } from './ui.js';
+import { initTweaks } from './tweaks.js';
 
-const sim = new Simulation();
+function parseSeedFromUrl() {
+  const raw = new URLSearchParams(window.location.search).get('seed');
+  if (raw == null || raw === '') return undefined;
+  const seed = Number.parseInt(raw, 10);
+  return Number.isFinite(seed) ? seed : undefined;
+}
+
+const seed = parseSeedFromUrl();
+const sim = seed !== undefined ? new Simulation(seed) : new Simulation();
+
 const fg = document.getElementById('fg');
 const bg = document.getElementById('bg');
 const signals = document.getElementById('signals');
@@ -17,6 +28,7 @@ renderer.init(geometry);
 if (container) {
   renderer.attachViewportControls(container);
 }
+initTweaks(renderer);
 
 let resizeScheduled = false;
 window.addEventListener('resize', () => {
@@ -29,17 +41,27 @@ window.addEventListener('resize', () => {
 });
 
 let lastTime = null;
-let paused = false;
-export let speedMultiplier = 1;
+
+const ui = initUI({
+  getSim: () => sim,
+  onReset: () => {
+    sim.reset();
+    lastTime = null;
+  },
+  onStep: () => {
+    sim.update(LOOP.MAX_DELTA * ui.speedMultiplier);
+  },
+});
 
 function tick(now) {
-  if (!paused) {
+  if (!ui.paused) {
     if (lastTime === null) lastTime = now;
     const rawDelta = (now - lastTime) / 1000;
     lastTime = now;
-    const delta = Math.min(rawDelta, LOOP.MAX_DELTA) * speedMultiplier;
+    const delta = Math.min(rawDelta, LOOP.MAX_DELTA) * ui.speedMultiplier;
     sim.update(delta);
   }
+  ui.update(sim);
   renderer.draw(sim);
   requestAnimationFrame(tick);
 }

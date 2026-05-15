@@ -54,6 +54,10 @@ export const CAR = {
   STOP_DECEL_ZONE: 28,
   /** Snap cleanly to stop target within this distance (no oscillation). */
   STOP_SETTLE_EPSILON: 0.75,
+  /** Speed drop per frame above this turns brake lights on. */
+  BRAKE_LIGHT_DECEL_EPS: 0.25,
+  /** Turn-signal flash half-period (seconds). */
+  TURN_SIGNAL_FLASH_PERIOD: 0.5,
 };
 
 /** Phase timing — single source for signal cycle durations (Step 5). */
@@ -76,6 +80,7 @@ export const MAIN_SIGNAL = {
 /** Protected left-turn arrow states. */
 export const LEFT_ARROW = {
   GREEN: 'green',
+  YELLOW: 'yellow',
   OFF: 'off',
 };
 
@@ -92,6 +97,15 @@ export const SPAWN = {
   /** Dev focus: only spawn on inbound right-turn lanes (all approaches). */
   RIGHT_LANE_ONLY: false,
 };
+
+/** Log inbound lane id + queue length each tick (carManager rebuild). */
+export const DEBUG_LANE_QUEUES = false;
+
+/** Log adaptive green phase id, elapsed time, and active demand each tick. */
+export const DEBUG_ADAPTIVE_TIMING = false;
+
+/** Log phase id on each phase transition. */
+export const DEBUG_PHASE_TRANSITIONS = false;
 
 function buildSignalConstants() {
   const LIGHT_RADIUS = 6;
@@ -141,7 +155,8 @@ export const LOOP = {
 
 /** Canvas viewport navigation (visual only). */
 export const VIEW = {
-  MIN_ZOOM: 0.35,
+  /** Floor is computed at runtime from container vs canvas width (see renderer._getMinZoom). */
+  MIN_ZOOM: 1,
   MAX_ZOOM: 4,
   ZOOM_WHEEL_SENSITIVITY: 0.0012,
   ROTATE_WHEEL_SENSITIVITY: 0.003,
@@ -153,6 +168,8 @@ export const COLORS = {
   ASPHALT: '#2B2D31',
   LANE_LINE: '#ECE7DA',
   CENTER_LINE: '#E8B247',
+  /** Center stripe of median divider (landscaped / tree strip). */
+  MEDIAN_TREE: '#3A6B4A',
   STOP_LINE: '#ECE7DA',
   SIGNAL_OFF: '#26282C',
   SIGNAL_RED: '#DD4B3A',
