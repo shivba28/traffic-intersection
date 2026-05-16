@@ -120,16 +120,27 @@ body.dark .grid-bg {
   pointer-events: none;
 }
 
-/* Floating panels over the canvas (inside #canvas-container; not transformed with the viewport). */
+/*
+ * Floating crosswalk panel — `position: fixed` at end of `<body>` so it can rise above `.sim-ui` / tweaks
+ * on hover (`z-index` would be trapped beneath higher ancestors if nested in `#canvas-container`).
+ */
 #crosswalk-panel {
-  position: absolute;
+  position: fixed;
   z-index: 4;
-  left: 312px;
-  top: 72px;
+  /* Fallback before JS docks beside #tweaks; main.js clears `bottom` and sets precise `top`/`left`. */
+  left: 180px;
+  right: auto;
+  top: auto;
+  bottom: 20px;
   min-width: 196px;
   max-width: min(280px, calc(100vw - 48px));
   padding: 0;
   touch-action: none;
+}
+
+#crosswalk-panel:hover,
+#crosswalk-panel:focus-within {
+  z-index: 2147483647;
 }
 
 .floating-panel__drag {

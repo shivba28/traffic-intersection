@@ -116,9 +116,9 @@ export const DEBUG_ADAPTIVE_TIMING = false;
 export const DEBUG_PHASE_TRANSITIONS = false;
 
 function buildSignalConstants() {
-  const LIGHT_RADIUS = 6;
-  const HEAD_PADDING = 6;
-  const INNER_GAP = 2.5;
+  const LIGHT_RADIUS = 4;
+  const HEAD_PADDING = 4;
+  const INNER_GAP = 1.5;
   const LAMP_COUNT = 4;
   const BULB_DIAMETER = LIGHT_RADIUS * 2;
   /** Horizontal housing: R · Y · G · ← in a row (render layout only). */

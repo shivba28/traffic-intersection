@@ -20,6 +20,50 @@ npm run preview # serve the build locally
 
 ---
 
+## Interface (HUD panels)
+
+The simulator draws the road and cars on canvases; overlaid **panels** explain what the signals are doing and let you control playback and presentation.
+
+### Tweaks (bottom-left)
+
+The **Tweaks** panel starts **minimized** so you see a thin title strip. Use **Expand** (`▲`) to open the full panel, and **`✕`** (or **Minimize**) to collapse it again. You can also tap the **header bar** when minimized to expand. If the **crosswalk** controls would sit under it, hover the crosswalk panel to bring it to the front.
+
+When expanded, choose:
+
+- **Theme** — **Day** or **Night** (light/dark scene asphalt and background).
+- **Density** — **Low**, **Med**, or **High** vehicle spawn rate (`src/tweaks.js` maps these to spawn intervals).
+- **Diagnostics** — **On** overlays intersection zone rectangles and reserved-car highlights so you can inspect the conflict logic; leave **Off** for a clean view.
+- **Crosswalks** — **Show** or **Hide** the painted crosswalk stripes on the static road layer (pedestrian logic is unchanged; only the marking art toggles).
+
+### Playback and speed (bottom-right)
+
+The **transport** bar is the main playback control:
+
+- **Play / Pause** — runs or freezes the simulation (**Space** does the same).
+- **Step one frame** — advances one update while paused, useful for catching a phase flip.
+- **0.5× / 1× / 2× / 4×** — multiplies simulation time; number keys **1**–**4** match these speeds.
+- **Reset** — clears the run and timing-related state (**R**).
+
+Just above, a small line lists those keyboard shortcuts. Next to the bar, the **compass** shows map north; its needle counter-rotates with the viewport so north stays readable while you pan/zoom/rotate the canvas.
+
+### Crosswalk (floating, near Tweaks on first load)
+
+After load, the crosswalk panel is **docked to the right** of the Tweaks strip and **bottom-aligned** with it. It **stays docked** while you expand or collapse Tweaks until you **drag** the crosswalk header (then it keeps your position). Dragging is **clamped** so the panel stays inside the map area.
+
+- **Signal** — current pedestrian signal state (e.g. walk / don’t walk), updated from the same logic as vehicle phases.
+- **Direction buttons** (labeled with the **walk-toward** direction) — push to **request** a crossing on that leg; the walk cycle runs during an all-red vehicle gap when safe. See *Signal phase state machine* → pedestrian notes below.
+
+While the pointer is over the panel (or while a control inside has focus), its **z-index** bumps up so it stacks above the rest of the HUD for easier clicking.
+
+### Other read-only panels
+
+These panels only **display** state; they don’t contain settings.
+
+- **Header (top-left)** — app title plus the **active signal phase** name, **time in the current phase**, the **next phase** name, and a short line about **adaptive timing** (how long the next slice is expected to run given queue demand).
+- **Telemetry (top-right)** — live **throughput** (vehicles that completed the intersection), **average wait** in the queue, and **cars currently queued** overall.
+
+---
+
 ## What's implemented
 
 | Feature | Status |
@@ -144,7 +188,7 @@ All tunables are in `src/constants.js`.
 | `CAR.MAX_SPEED`, `CAR.FOLLOW_GAP`, `CAR.STOP_DECEL_ZONE` | Movement and queuing feel |
 | `DEBUG_ADAPTIVE_TIMING`, `DEBUG_PHASE_TRANSITIONS` | Console logging flags |
 
-**Runtime tweaks panel** (bottom-left): Day/Night theme · Traffic density · Diagnostics overlay (zone rects + reserved cars) · Crosswalk visibility.
+See **Tweaks** in [Interface (HUD panels)](#interface-hud-panels) for Theme, Density, Diagnostics, and crosswalk visibility toggles.
 
 ---
 

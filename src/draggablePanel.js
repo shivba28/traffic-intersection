@@ -1,11 +1,20 @@
 /**
- * Drag a floating panel within a bounding container.
+ * Drag a floating panel within the viewport rectangle of a bounds element (#canvas-container).
+ * Panel must use `position: fixed`; coordinates are viewport pixels (`left` / `top`).
  * @param {HTMLElement} panel
  * @param {HTMLElement} handle
  * @param {HTMLElement} boundsEl
+ * @param {{ onUserCommittedDrag?: () => void }} [opts]
  */
-export function initDraggablePanel(panel, handle, boundsEl) {
+export function initDraggablePanel(panel, handle, boundsEl, opts = undefined) {
+  const onUserCommittedDrag = opts?.onUserCommittedDrag;
+
+  /** Pixels moved from pointer-down before we treat the gesture as repositioning vs. clicking. */
+  const DRAG_SLOP_PX = 4;
+
   let dragging = false;
+  /** True once the pointer moves past slop during the active drag (for optional callbacks). */
+  let draggedPastSlop = false;
   /** @type {number | null} */
   let ptrId = null;
   let originClientX = 0;
@@ -13,24 +22,33 @@ export function initDraggablePanel(panel, handle, boundsEl) {
   let baseLeft = 0;
   let baseTop = 0;
 
-  function clampPos(left, top) {
+  /**
+   * @param {number} leftViewport
+   * @param {number} topViewport
+   */
+  function clampPos(leftViewport, topViewport) {
     const pad = 8;
-    const bw = boundsEl.clientWidth;
-    const bh = boundsEl.clientHeight;
+    const br = boundsEl.getBoundingClientRect();
     const pw = panel.offsetWidth;
     const ph = panel.offsetHeight;
-    const maxL = Math.max(pad, bw - pw - pad);
-    const maxT = Math.max(pad, bh - ph - pad);
+    const minL = br.left + pad;
+    const minT = br.top + pad;
+    const maxL = br.right - pw - pad;
+    const maxT = br.bottom - ph - pad;
     return {
-      left: Math.min(maxL, Math.max(pad, left)),
-      top: Math.min(maxT, Math.max(pad, top)),
+      left: Math.min(maxL, Math.max(minL, leftViewport)),
+      top: Math.min(maxT, Math.max(minT, topViewport)),
     };
   }
 
-  function applyPosition(left, top) {
-    const c = clampPos(left, top);
-    panel.style.left = `${c.left}px`;
-    panel.style.top = `${c.top}px`;
+  /**
+   * @param {number} leftViewport
+   * @param {number} topViewport
+   */
+  function applyPosition(leftViewport, topViewport) {
+    const c = clampPos(leftViewport, topViewport);
+    panel.style.left = `${Math.round(c.left)}px`;
+    panel.style.top = `${Math.round(c.top)}px`;
     panel.style.right = 'auto';
     panel.style.bottom = 'auto';
   }
@@ -41,15 +59,15 @@ export function initDraggablePanel(panel, handle, boundsEl) {
     if (target instanceof Element && target.closest('button, input, select, textarea')) return;
 
     dragging = true;
+    draggedPastSlop = false;
     ptrId = e.pointerId;
     handle.setPointerCapture(e.pointerId);
 
-    const br = boundsEl.getBoundingClientRect();
     const pr = panel.getBoundingClientRect();
     originClientX = e.clientX;
     originClientY = e.clientY;
-    baseLeft = pr.left - br.left + boundsEl.scrollLeft;
-    baseTop = pr.top - br.top + boundsEl.scrollTop;
+    baseLeft = pr.left;
+    baseTop = pr.top;
 
     e.preventDefault();
     handle.style.cursor = 'grabbing';
@@ -57,6 +75,12 @@ export function initDraggablePanel(panel, handle, boundsEl) {
 
   handle.addEventListener('pointermove', (e) => {
     if (!dragging || e.pointerId !== ptrId) return;
+    if (
+      !draggedPastSlop &&
+      Math.hypot(e.clientX - originClientX, e.clientY - originClientY) > DRAG_SLOP_PX
+    ) {
+      draggedPastSlop = true;
+    }
     const left = baseLeft + (e.clientX - originClientX);
     const top = baseTop + (e.clientY - originClientY);
     applyPosition(left, top);
@@ -67,6 +91,8 @@ export function initDraggablePanel(panel, handle, boundsEl) {
     if (!dragging || e.pointerId !== ptrId) return;
     dragging = false;
     ptrId = null;
+    if (draggedPastSlop && onUserCommittedDrag) onUserCommittedDrag();
+    draggedPastSlop = false;
     try {
       handle.releasePointerCapture(e.pointerId);
     } catch {
@@ -79,10 +105,7 @@ export function initDraggablePanel(panel, handle, boundsEl) {
   handle.addEventListener('pointercancel', endDrag);
 
   window.addEventListener('resize', () => {
-    const br = boundsEl.getBoundingClientRect();
     const pr = panel.getBoundingClientRect();
-    const left = pr.left - br.left + boundsEl.scrollLeft;
-    const top = pr.top - br.top + boundsEl.scrollTop;
-    applyPosition(left, top);
+    applyPosition(pr.left, pr.top);
   });
 }

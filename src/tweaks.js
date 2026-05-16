@@ -171,7 +171,7 @@ export function initTweaks(renderer) {
   });
 
   syncTweaksUI(tweaksEl);
-  setExpanded(true);
+  setExpanded(false);
 
   return {
     /** @deprecated use class tweaks--minimized / is-open on #tweaks */

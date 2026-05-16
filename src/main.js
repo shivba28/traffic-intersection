@@ -7,6 +7,53 @@ import { initTweaks } from './tweaks.js';
 
 import { initDraggablePanel } from './draggablePanel.js';
 
+const CROSSWALK_DOCK_GAP_PX = 12;
+
+/** Place #crosswalk-panel to the right of #tweaks, bottom-aligned. */
+function dockCrosswalkNextToTweaks(panel, tweaksEl, gapPx = CROSSWALK_DOCK_GAP_PX) {
+  const tr = tweaksEl.getBoundingClientRect();
+  const h = panel.offsetHeight || panel.getBoundingClientRect().height;
+  panel.style.right = 'auto';
+  panel.style.bottom = 'auto';
+  panel.style.left = `${Math.round(tr.right + gapPx)}px`;
+  panel.style.top = `${Math.round(tr.bottom - h)}px`;
+}
+
+/**
+ * Re-docks while tweaks size changes until `unsubscribe()`.
+ * @returns {() => void}
+ */
+function subscribeCrosswalkDock(panel, tweaksEl) {
+  const gapPx = CROSSWALK_DOCK_GAP_PX;
+  /** @type {number | null} */
+  let rafId = null;
+
+  function scheduleDock() {
+    if (rafId !== null) return;
+    rafId = window.requestAnimationFrame(() => {
+      rafId = null;
+      dockCrosswalkNextToTweaks(panel, tweaksEl, gapPx);
+    });
+  }
+
+  dockCrosswalkNextToTweaks(panel, tweaksEl, gapPx);
+  scheduleDock();
+
+  const ro = new ResizeObserver(scheduleDock);
+  ro.observe(tweaksEl);
+
+  window.addEventListener('resize', scheduleDock);
+
+  return () => {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    ro.disconnect();
+    window.removeEventListener('resize', scheduleDock);
+  };
+}
+
 function parseSeedFromUrl() {
   const raw = new URLSearchParams(window.location.search).get('seed');
   if (raw == null || raw === '') return undefined;
@@ -24,18 +71,28 @@ if (!fg || !bg || !signals) {
   throw new Error('Missing #fg, #bg, or #signals canvas element');
 }
 
-const container = document.getElementById('canvas-container');
 const renderer = new Renderer(fg, bg, signals);
 renderer.init(geometry);
+
+initTweaks(renderer);
+
+const container = document.getElementById('canvas-container');
 if (container) {
   renderer.attachViewportControls(container);
   const crossPanel = document.getElementById('crosswalk-panel');
   const dragHandle = document.getElementById('crosswalk-drag-handle');
+  const tweaksEl = document.getElementById('tweaks');
   if (crossPanel && dragHandle) {
-    initDraggablePanel(crossPanel, dragHandle, container);
+    let stopDockCrosswalk =
+      tweaksEl != null ? subscribeCrosswalkDock(crossPanel, tweaksEl) : undefined;
+    initDraggablePanel(crossPanel, dragHandle, container, {
+      onUserCommittedDrag() {
+        stopDockCrosswalk?.();
+        stopDockCrosswalk = undefined;
+      },
+    });
   }
 }
-initTweaks(renderer);
 
 let resizeScheduled = false;
 window.addEventListener('resize', () => {
